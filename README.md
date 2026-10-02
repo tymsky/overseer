@@ -1,5 +1,7 @@
 # overseer
 
+[![tests](https://github.com/tymsky/overseer/actions/workflows/tests.yml/badge.svg)](https://github.com/tymsky/overseer/actions/workflows/tests.yml)
+
 A bot that plays **Fallout (1997)** on Windows, on your own copy of the game. It reads the game's memory to know
 exactly what is going on (the map, the player, every critter, the dialogue, the quest variables) and plays through
 the game's own window with ordinary mouse and keyboard input. There is no AI model in the loop: the quests are routes
