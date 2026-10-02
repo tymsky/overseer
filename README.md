@@ -108,6 +108,10 @@ overseer is not affiliated with or endorsed by Bethesda Softworks, ZeniMax, Micr
 their trademark. This repository contains no game files and nothing extracted from them; you need your own, legally
 obtained copy of the game.
 
+## Contributing
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [GPL-3.0-or-later](LICENSE).
