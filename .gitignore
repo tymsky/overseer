@@ -1,0 +1,25 @@
+# Game files and anything made from them never go into git (f1/paths.py): the game copy, the knowledge extracted
+# from it, runs, saves, captures.
+/instance/
+/extracted/
+/runs/
+/saves/
+/captures/
+*.DAT
+*.dat
+*.exe
+*.dll
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+
+# Notes for local Claude Code sessions, not published
+CLAUDE.md
+# The engine notebook: measured facts with their runs, kept local
+docs/ENGINE.md
