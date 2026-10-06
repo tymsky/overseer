@@ -2,8 +2,9 @@
 waiting for the user), or the background way through the DINPUT.DLL proxy in the instance (f1/dinput.py): the game
 fed directly, behind other windows, with the user's mouse and keyboard left alone.
 
-`python -m f1.instance input proxy` puts the proxy in the instance and `input direct` takes it out; the mode is the
-instance's (its folder holds DINPUT.DLL or not). Every executor goes through the functions here, so routes run the
+The proxy is the default: `f1.play setup` (and `f1.instance build`) build it with zig and put it in the instance;
+`--input direct`, or `python -m f1.instance input direct` later, takes it out. The mode is the instance's (its
+folder holds DINPUT.DLL or not). Every executor goes through the functions here, so routes run the
 same either way.
 """
 

@@ -1,22 +1,24 @@
 """From nothing to a playing bot: set up the bot's copy of the game, then play a character's routes in order.
 
-    python -m f1.play setup [--game DIR] [--size WxH]
-        build the instance from the Steam install (f1/steam.py finds it) and the knowledge from its files
+    python -m f1.play setup [--game DIR] [--size WxH] [--input proxy|direct] [--zig PATH]
+        build the instance from the Steam install (f1/steam.py finds it), with the background-input proxy built by
+        zig (--input direct: without it), and the knowledge from its files
     python -m f1.play [idealist|agent] [--until N] [--clock K]
         the character's start save, made once (the character entered in the game's editor, the bot's preferences,
         a save on the first map, kept as saves/<name>-start); then a new session from it and the character's routes
         one after another, unattended (f1/routes.py). The Idealist plays the whole game; the Agent the first quests.
         --until N stops before step N of the chain, --clock K runs a test at K times the game's speed
 
-Keep off the mouse and keyboard while it plays (the presence guard pauses the bot otherwise), and keep the PC
-unlocked and awake.
+With the default background input (--input proxy) the game plays behind other windows and the PC stays free; with
+--input direct keep off the mouse and keyboard while it plays (the presence guard pauses the bot otherwise). Either
+way keep the PC unlocked and awake.
 """
 
 import argparse
 import datetime
 import sys
 
-from f1 import chargen, flows, instance, knowledge, paths, routes, session
+from f1 import chargen, flows, inputs, instance, knowledge, paths, routes, session
 from f1.actions import Actor
 from f1.telemetry import EventLog
 
@@ -42,12 +44,16 @@ CHAINS = {
 }
 
 
-def setup(game: str | None, size: tuple[int, int] | None) -> int:
+def setup(game: str | None, size: tuple[int, int] | None, input_mode: str = "proxy", zig: str | None = None) -> int:
     if instance.MANIFEST.exists():
         print(f"instance at {instance.INSTANCE_DIR} (python -m f1.instance build --force rebuilds it)")
+        if (input_mode == "proxy") != inputs.background():
+            instance.set_input(input_mode, zig)
     else:
-        m = instance.build(False, game, size)
+        m = instance.build(False, game, size, input_mode, zig)
         print(f"instance built from {m['steam_dir']} at {instance.INSTANCE_DIR}")
+    mode = "proxy (the game plays behind other windows)" if inputs.background() else "direct (the game in front)"
+    print(f"input: {mode}")
     if problems := instance.check():
         print("\n".join(problems), file=sys.stderr)
         return 1
@@ -98,9 +104,10 @@ def main(argv: list[str]) -> int:
         ap = argparse.ArgumentParser(prog="python -m f1.play setup")
         ap.add_argument("--game", help="the game's folder (default: found through Steam)")
         ap.add_argument("--size", type=instance.parse_size, help="the game's resolution WxH")
+        instance.add_input_args(ap)
         args = ap.parse_args(argv[1:])
         try:
-            return setup(args.game, args.size)
+            return setup(args.game, args.size, args.input, args.zig)
         except instance.InstanceError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1

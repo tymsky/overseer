@@ -241,7 +241,17 @@ def running_from_instance() -> list[int]:
     return [pid for pid in win32.all_pids() if (img := win32.process_image(pid)) and img.lower().startswith(root)]
 
 
-def build(force: bool, game: str | Path | None = None, size: tuple[int, int] | None = None) -> dict:
+def build(
+    force: bool,
+    game: str | Path | None = None,
+    size: tuple[int, int] | None = None,
+    input_mode: str = "proxy",
+    zig: str | None = None,
+) -> dict:
+    """The instance from the Steam install; with `input_mode` "proxy" (the default) the background-input DLL in it,
+    built first with zig when it is not built yet (before anything is copied, so a missing zig fails fast)."""
+    if input_mode == "proxy":
+        ensure_proxy(zig)
     if pids := running_from_instance():
         raise InstanceError(f"processes run from the instance ({pids}); stop them first (python -m f1.session stop)")
     if (INSTANCE_DIR / EXE).exists() or (INSTANCE_DIR / "INSTANCE.json").exists():
@@ -282,6 +292,8 @@ def build(force: bool, game: str | Path | None = None, size: tuple[int, int] | N
     dialogs, before, after = patch_exe()
     patched = verify(INSTANCE_DIR / EXE)
 
+    if input_mode == "proxy":
+        shutil.copy2(PROXY_BUILT, INSTANCE_DIR / PROXY_DLL)
     configure(size)
 
     manifest = {
@@ -323,8 +335,22 @@ PROXY_SOURCE = paths.REPO / "tools" / "dinput"
 PROXY_BUILT = paths.HOME / "build" / PROXY_DLL
 
 
-def build_proxy(zig: str) -> Path:
+ZIG_HELP = (
+    "background input needs zig (one download, nothing to install: https://ziglang.org/download, or "
+    "winget install -e --id zig.zig) on PATH, in the ZIG variable or given as --zig PATH; "
+    "or play without it: --input direct (the game in front, the PC kept busy)"
+)
+
+
+def find_zig(zig: str | None = None) -> str | None:
+    """The zig executable: given, the ZIG environment variable, or on PATH."""
+    return zig or os.environ.get("ZIG") or shutil.which("zig")
+
+
+def build_proxy(zig: str | None = None) -> Path:
     """Compile tools/dinput into HOME/build/DINPUT.DLL with zig (a 32-bit DLL, as the exe is)."""
+    if not (zig := find_zig(zig)):
+        raise InstanceError(ZIG_HELP)
     PROXY_BUILT.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         zig,
@@ -338,21 +364,27 @@ def build_proxy(zig: str) -> Path:
         "-o",
         str(PROXY_BUILT),
     ]
-    out = subprocess.run(cmd, cwd=PROXY_SOURCE, capture_output=True, text=True, check=False)
+    try:
+        out = subprocess.run(cmd, cwd=PROXY_SOURCE, capture_output=True, text=True, check=False)
+    except OSError as e:
+        raise InstanceError(f"cannot run zig ({zig}): {e}; {ZIG_HELP}") from e
     if out.returncode != 0 or not PROXY_BUILT.exists():
         raise InstanceError(f"zig failed: {out.stderr.strip() or out.stdout.strip()}")
     return PROXY_BUILT
 
 
-def set_input(mode: str) -> dict[str, str]:
+def ensure_proxy(zig: str | None = None) -> Path:
+    """The built proxy, building it the first time."""
+    return PROXY_BUILT if PROXY_BUILT.exists() else build_proxy(zig)
+
+
+def set_input(mode: str, zig: str | None = None) -> dict[str, str]:
     """`proxy`: the proxy into the instance (background input); `direct`: out again (SendInput, the game in front)."""
     if running_from_instance():
         raise InstanceError("the game is running from the instance; stop it first")
     target = INSTANCE_DIR / PROXY_DLL
     if mode == "proxy":
-        if not PROXY_BUILT.exists():
-            raise InstanceError(f"no {PROXY_BUILT}; build it: python -m f1.instance input build ZIG")
-        shutil.copy2(PROXY_BUILT, target)
+        shutil.copy2(ensure_proxy(zig), target)
     else:
         target.unlink(missing_ok=True)
     settings = PROXY_SETTINGS if mode == "proxy" else (("INPUT", "ALT_MOUSE_INPUT", "1"),)
@@ -402,6 +434,17 @@ def parse_size(text: str) -> tuple[int, int]:
     return w, h
 
 
+def add_input_args(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument(
+        "--input",
+        choices=("proxy", "direct"),
+        default="proxy",
+        help="proxy (default): the game plays behind other windows through the DINPUT.DLL proxy; "
+        "direct: through Windows' own input, the game in front",
+    )
+    ap.add_argument("--zig", help="the zig executable that builds the proxy (default: the ZIG variable, then PATH)")
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="python -m f1.instance")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -409,24 +452,23 @@ def main(argv: list[str]) -> int:
     b.add_argument("--force", action="store_true")
     b.add_argument("--game", help="the game's folder (default: found through Steam)")
     b.add_argument("--size", type=parse_size, help="the game's resolution WxH (default: the largest that fits)")
+    add_input_args(b)
     sub.add_parser("configure").add_argument("--size", type=parse_size)
     sub.add_parser("check")
     i = sub.add_parser("input", help="background input through the DINPUT.DLL proxy, or direct (SendInput)")
     i.add_argument("mode", choices=("build", "proxy", "direct"))
-    i.add_argument("zig", nargs="?", help="build: the zig executable")
+    i.add_argument("zig", nargs="?", help="the zig executable (default: the ZIG variable, then PATH)")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "build":
-            m = build(args.force, args.game, args.size)
+            m = build(args.force, args.game, args.size, args.input, args.zig)
             print(json.dumps({k: v for k, v in m.items() if k not in ("steam_fingerprint", "copied")}, indent=1))
             return 0
         if args.cmd == "input":
             if args.mode == "build":
-                if not args.zig:
-                    raise InstanceError("build needs the zig executable: python -m f1.instance input build ZIG")
                 print(build_proxy(args.zig))
             else:
-                print(json.dumps(set_input(args.mode), indent=1))
+                print(json.dumps(set_input(args.mode, args.zig), indent=1))
             return 0
         if args.cmd == "configure":
             print(json.dumps(configure(args.size), indent=1))

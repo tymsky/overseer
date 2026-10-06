@@ -74,3 +74,27 @@ def test_mode_switch(tmp_path, monkeypatch):
 
 def test_extended_code():
     assert dinput.EXTENDED == 0x80 and struct.calcsize("<i") == 4
+
+
+def test_proxy_without_zig(tmp_path, monkeypatch):
+    monkeypatch.setattr(instance, "PROXY_BUILT", tmp_path / "build" / "DINPUT.DLL")
+    monkeypatch.delenv("ZIG", raising=False)
+    monkeypatch.setattr(instance.shutil, "which", lambda _name: None)
+    with pytest.raises(instance.InstanceError, match="--input direct"):
+        instance.ensure_proxy()
+    with pytest.raises(instance.InstanceError, match="zig"):
+        instance.build(False, input_mode="proxy")  # fails before anything is copied
+
+
+def test_find_zig(monkeypatch):
+    monkeypatch.setenv("ZIG", "C:/tools/zig/zig.exe")
+    assert instance.find_zig("given.exe") == "given.exe"
+    assert instance.find_zig() == "C:/tools/zig/zig.exe"
+
+
+def test_proxy_built_once(tmp_path, monkeypatch):
+    built = tmp_path / "DINPUT.DLL"
+    built.write_bytes(b"MZ")
+    monkeypatch.setattr(instance, "PROXY_BUILT", built)
+    monkeypatch.setattr(instance, "build_proxy", lambda _zig=None: pytest.fail("built again"))
+    assert instance.ensure_proxy() == built
