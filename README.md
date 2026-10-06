@@ -65,6 +65,12 @@ pauses the bot until you stop; it gives up after two minutes of use.
 - `--clock K` (a development option) makes the game run K times as fast by redirecting its clock function: it
   patches the process's import table and starts a thread in it. Security software may flag that. The bot never
   does it unless asked.
+- **Background input** (optional, `python -m f1.instance input build ZIG` then `input proxy`): a small
+  `DINPUT.DLL` built from `tools/dinput/` with [zig](https://ziglang.org) goes into the copy's folder. The game loads
+  it instead of the system's DirectInput and takes the bot's mouse and keys from it, so the game can play behind your
+  other windows while you use the computer: your mouse and keyboard never reach it, and the bot never moves your
+  cursor. It also points the High Resolution Patch's cursor calls at the bot's virtual cursor. No game code is changed.
+  `input direct` takes it out again (then the bot needs the game in front, and waits while you use the mouse).
 - Everything it makes stays in this folder: `instance/`, `extracted/`, `runs/` (event logs), `saves/` (kept saves
   and backups), `captures/`. Set `OVERSEER_HOME` to keep them elsewhere.
 
@@ -74,6 +80,7 @@ pauses the bot until you stop; it gives up after two minutes of use.
 |---|---|
 | `python -m f1.verify_exe [EXE]` | checks an exe against the memory map, without running it |
 | `python -m f1.instance build\|configure\|check` | the game copy: build it, set it up again (`--size`), check it |
+| `python -m f1.instance input build ZIG\|proxy\|direct` | background input: build the proxy DLL with zig, put it in the copy, take it out |
 | `python -m f1.smoke` | a short live check: start the game, read its menu from memory, quit |
 | `python -m f1.session start\|status\|state\|shot NAME\|stop` | start the game, look at it, stop it |
 | `python -m f1.flows load NAME` | load a kept save from `saves/` in a new session |

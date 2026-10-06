@@ -20,6 +20,7 @@ from f1 import (
     dialogue,
     floats,
     geometry,
+    inputs,
     instance,
     knowledge,
     nav,
@@ -239,28 +240,22 @@ class Actor:
         return state.read(self.mem)
 
     def _front(self) -> None:
-        if not self.guard.wait_until_free(120):
-            raise OwnerActive("the user kept using the computer")
-        if win32.foreground_pid() != self.pid:
-            win32.SetForegroundWindow(self.hwnd)
-            win32.wait_for(lambda: win32.foreground_pid() == self.pid, 2)
-        if win32.foreground_pid() != self.pid:
-            raise session.SessionError("the game is not the window in front")
+        inputs.ready(self.pid, self.hwnd, self.guard, 120, session.SessionError, OwnerActive)
 
     def point(self, x: int, y: int) -> bool:
         """Put the cursor on game-screen pixel (x, y) and confirm it with the engine's own mouse_x/y."""
         self._front()
         r = win32.client_rect(self.hwnd)
-        with self.guard.acting():
-            win32.SetCursorPos(r.left + x, r.top + y)
+        with inputs.acting(self.guard):
+            inputs.set_cursor(r.left + x, r.top + y)
         return win32.wait_for(lambda: (self.mem.glob("mouse_x"), self.mem.glob("mouse_y")) == (x, y), 1.0, 0.02)
 
     def click(self, right: bool = False) -> None:
         self._front()
-        with clock.held(self.pid), self.guard.acting():  # the click at the game's own speed (f1.clock)
-            win32.mouse_button(down=True, right=right)
+        with clock.held(self.pid), inputs.acting(self.guard):  # the click at the game's own speed (f1.clock)
+            inputs.mouse_button(down=True, right=right)
             time.sleep(0.06)
-            win32.mouse_button(down=False, right=right)
+            inputs.mouse_button(down=False, right=right)
 
     def walk_to(self, tile: int, timeout_s: float = 12.0) -> Outcome:
         """Walk the player to `tile` by a click on its hex in move mode; done when the player stands there, still."""
@@ -773,15 +768,15 @@ class Actor:
         self.point(x0, y0)
         self._front()
         r = win32.client_rect(self.hwnd)
-        with clock.held(self.pid), self.guard.acting():
-            win32.mouse_button(down=True)
+        with clock.held(self.pid), inputs.acting(self.guard):
+            inputs.mouse_button(down=True)
             time.sleep(0.15)
             steps = 12
             for k in range(1, steps + 1):
-                win32.SetCursorPos(r.left + x0 + (x1 - x0) * k // steps, r.top + y0 + (y1 - y0) * k // steps)
+                inputs.set_cursor(r.left + x0 + (x1 - x0) * k // steps, r.top + y0 + (y1 - y0) * k // steps)
                 time.sleep(0.03)
             time.sleep(0.15)
-            win32.mouse_button(down=False)
+            inputs.mouse_button(down=False)
         time.sleep(0.3)
 
     def items(self) -> list[tuple[int, int, int]]:
@@ -936,14 +931,14 @@ class Actor:
             return f"no arrow cursor in the inventory (immode {self.mem.glob('immode')})"
         r = win32.client_rect(self.hwnd)
         self._front()
-        with clock.held(self.pid), self.guard.acting():
-            win32.mouse_button(down=True)
+        with clock.held(self.pid), inputs.acting(self.guard):
+            inputs.mouse_button(down=True)
             time.sleep(0.8)  # held past the button repeat time: the action menu opens under the cursor
             for k in range(1, 4 * entry + 1):
-                win32.SetCursorPos(r.left + sx, r.top + sy + 4 * k)  # 16 px down an entry ("Use" is one down)
+                inputs.set_cursor(r.left + sx, r.top + sy + 4 * k)  # 16 px down an entry ("Use" is one down)
                 time.sleep(0.05)
             time.sleep(0.3)
-            win32.mouse_button(down=False)
+            inputs.mouse_button(down=False)
         return None
 
     def _aim_at(

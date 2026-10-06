@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from f1 import capture, clock, hooks, instance, paths, state, win32
+from f1 import capture, clock, hooks, inputs, instance, paths, state, win32
 from f1 import engine_map as em
 from f1.guard import Guard, OwnerActive
 from f1.memory import GameMemory
@@ -126,6 +126,7 @@ def start(run_hooks: bool = True) -> dict:
         raise SessionError("the instance's exe is not the pinned HRP-patched 1.1 build")
     backup = _backup_saves()
     instance.music_on()
+    inputs.prepare_start()  # the background input's memory, before the game looks for it
     env = {k: v for k, v in os.environ.items() if k != "__COMPAT_LAYER"}
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 
@@ -146,6 +147,8 @@ def start(run_hooks: bool = True) -> dict:
         raise SessionError("no game window within 30 s")
     if proc.poll() is not None:
         raise SessionError(f"the game exited at once (code {proc.returncode}); another copy running?")
+    if not inputs.wait_devices():
+        raise SessionError("the game did not create its input devices through the proxy (DINPUT.DLL)")
     time.sleep(1.0)
     names = sorted(hooks.load()) if run_hooks else []
     extra = hooks.call("start", env) if run_hooks else {}
@@ -181,17 +184,17 @@ def press(name: str, wait_owner_s: float = 120) -> dict:
     if not hwnd:
         raise SessionError("the game is not running")
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with clock.held(pid), guard.acting():  # input at the game's own speed (f1.clock)
+    with clock.held(pid), inputs.acting(guard):  # input at the game's own speed (f1.clock)
         scan, extended = KEYS[base]
         if mods:
-            win32.key(CTRL, down=True)
+            inputs.key(CTRL, down=True)
             time.sleep(0.03)
-        win32.key(scan, down=True, extended=extended)
+        inputs.key(scan, down=True, extended=extended)
         time.sleep(0.06)
-        win32.key(scan, down=False, extended=extended)
+        inputs.key(scan, down=False, extended=extended)
         if mods:
             time.sleep(0.03)
-            win32.key(CTRL, down=False)
+            inputs.key(CTRL, down=False)
     return LOG.emit("key", key=name, **describe(pid))
 
 
@@ -206,12 +209,12 @@ def press_keys(names: list[str], gap_s: float = 0.03, hold_s: float = 0.02, wait
     if not hwnd:
         raise SessionError("the game is not running")
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with clock.held(pid), guard.acting():  # input at the game's own speed (f1.clock)
+    with clock.held(pid), inputs.acting(guard):  # input at the game's own speed (f1.clock)
         for name in names:
             scan, extended = KEYS[name]
-            win32.key(scan, down=True, extended=extended)
+            inputs.key(scan, down=True, extended=extended)
             time.sleep(hold_s)
-            win32.key(scan, down=False, extended=extended)
+            inputs.key(scan, down=False, extended=extended)
             time.sleep(gap_s)
     return LOG.emit("key", key=" ".join(names), **describe(pid))
 
@@ -226,16 +229,16 @@ def type_text(text: str, wait_owner_s: float = 120) -> dict:
     if unknown := [n for n in names if n not in KEYS]:
         raise SessionError(f"cannot type {unknown}")
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with clock.held(pid), guard.acting():  # input at the game's own speed (f1.clock)
+    with clock.held(pid), inputs.acting(guard):  # input at the game's own speed (f1.clock)
         for ch, name in zip(text, names, strict=True):
             scan, extended = KEYS[name]
             if ch.isupper():
-                win32.key(SHIFT, down=True)
-            win32.key(scan, down=True, extended=extended)
+                inputs.key(SHIFT, down=True)
+            inputs.key(scan, down=True, extended=extended)
             time.sleep(0.04)
-            win32.key(scan, down=False, extended=extended)
+            inputs.key(scan, down=False, extended=extended)
             if ch.isupper():
-                win32.key(SHIFT, down=False)
+                inputs.key(SHIFT, down=False)
             time.sleep(0.06)
     return LOG.emit("type", text=text, **describe(pid))
 
@@ -250,12 +253,12 @@ def click(x: int, y: int, right: bool = False, wait_owner_s: float = 120) -> dic
     if not (0 <= x < r.width and 0 <= y < r.height):
         raise SessionError(f"({x}, {y}) is outside the {r.width}x{r.height} game screen")
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with clock.held(pid), guard.acting():  # input at the game's own speed (f1.clock)
-        win32.SetCursorPos(r.left + x, r.top + y)
+    with clock.held(pid), inputs.acting(guard):  # input at the game's own speed (f1.clock)
+        inputs.set_cursor(r.left + x, r.top + y)
         time.sleep(0.05)
-        win32.mouse_button(down=True, right=right)
+        inputs.mouse_button(down=True, right=right)
         time.sleep(0.06)
-        win32.mouse_button(down=False, right=right)
+        inputs.mouse_button(down=False, right=right)
     return LOG.emit("click", x=x, y=y, right=right, **describe(pid))
 
 
@@ -268,8 +271,8 @@ def move(x: int, y: int, wait_owner_s: float = 120) -> dict:
         raise SessionError("the game is not running")
     r = win32.client_rect(hwnd)
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with guard.acting():
-        win32.SetCursorPos(r.left + x, r.top + y)
+    with inputs.acting(guard):
+        inputs.set_cursor(r.left + x, r.top + y)
     return LOG.emit("move", x=x, y=y, **describe(pid))
 
 
@@ -281,28 +284,23 @@ def drag(x0: int, y0: int, x1: int, y1: int, steps: int = 12, wait_owner_s: floa
         raise SessionError("the game is not running")
     r = win32.client_rect(hwnd)
     guard = _ready_to_act(pid, hwnd, wait_owner_s)
-    with clock.held(pid), guard.acting():  # input at the game's own speed (f1.clock)
-        win32.SetCursorPos(r.left + x0, r.top + y0)
+    with clock.held(pid), inputs.acting(guard):  # input at the game's own speed (f1.clock)
+        inputs.set_cursor(r.left + x0, r.top + y0)
         time.sleep(0.08)
-        win32.mouse_button(down=True)
+        inputs.mouse_button(down=True)
         for k in range(1, steps + 1):
             time.sleep(0.04)
-            win32.SetCursorPos(r.left + x0 + (x1 - x0) * k // steps, r.top + y0 + (y1 - y0) * k // steps)
+            inputs.set_cursor(r.left + x0 + (x1 - x0) * k // steps, r.top + y0 + (y1 - y0) * k // steps)
         time.sleep(0.15)
-        win32.mouse_button(down=False)
+        inputs.mouse_button(down=False)
     return LOG.emit("drag", start=[x0, y0], end=[x1, y1], **describe(pid))
 
 
 def _ready_to_act(pid: int, hwnd: int, wait_owner_s: float) -> Guard:
-    """The guard, once the user is idle and the game is the window in front; raises otherwise."""
+    """The guard, once the game may take input (f1.inputs.ready: in the background the game awake; otherwise the user
+    idle and the game the window in front); raises otherwise."""
     guard = Guard(state=GUARD_STATE)
-    if not guard.wait_until_free(wait_owner_s):
-        raise OwnerActive("the user kept using the computer; no input sent")
-    if win32.foreground_pid() != pid:
-        win32.SetForegroundWindow(hwnd)
-        win32.wait_for(lambda: win32.foreground_pid() == pid, 2)
-    if win32.foreground_pid() != pid:
-        raise SessionError("the game is not the window in front; no input sent")
+    inputs.ready(pid, hwnd, guard, wait_owner_s, SessionError, OwnerActive)
     _off_the_edges(hwnd, guard)
     return guard
 
@@ -314,11 +312,11 @@ def _off_the_edges(hwnd: int, guard: Guard) -> None:
     """The engine scrolls the map while the mouse sits on the screen's edge and ignores keys meanwhile (game.c:
     `if (gmouse_is_scrolling()) return 0;`). A cursor left there (or outside the window) goes to the view's middle."""
     r = win32.client_rect(hwnd)
-    x, y = win32.cursor_pos()
+    x, y = inputs.cursor_pos()
     if r.left + EDGE <= x < r.left + r.width - EDGE and r.top + EDGE <= y < r.top + r.height - EDGE:
         return
-    with guard.acting():
-        win32.SetCursorPos(r.left + r.width // 2, r.top + (r.height - 100) // 2)  # the map view's middle
+    with inputs.acting(guard):
+        inputs.set_cursor(r.left + r.width // 2, r.top + (r.height - 100) // 2)  # the map view's middle
     time.sleep(0.1)
 
 

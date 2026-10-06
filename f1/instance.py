@@ -304,14 +304,61 @@ def build(force: bool, game: str | Path | None = None, size: tuple[int, int] | N
 
 def configure(size: tuple[int, int] | None = None) -> dict[str, str]:
     """Apply the bot's settings to the instance's f1_res.ini and fallout.cfg (idempotent), the resolution too (by
-    default the largest that fits the screen)."""
+    default the largest that fits the screen), and the input mode the instance holds (`input`)."""
     size = size or default_size()
     applied = {}
-    for name, settings in (("f1_res.ini", HRP_SETTINGS + size_settings(size)), ("fallout.cfg", CFG_SETTINGS)):
+    hrp = HRP_SETTINGS + size_settings(size) + (PROXY_SETTINGS if (INSTANCE_DIR / PROXY_DLL).exists() else ())
+    for name, settings in (("f1_res.ini", hrp), ("fallout.cfg", CFG_SETTINGS)):
         path = INSTANCE_DIR / name
         path.write_bytes(set_ini_values(path.read_bytes().decode("latin1"), settings).encode("latin1"))
         applied |= {f"{name}:{s}.{k}": v for s, k, v in settings}
     return applied
+
+
+# Background input (f1/inputs.py): the DINPUT.DLL proxy built from tools/dinput in the instance's folder. HRP's own
+# alternate mouse (GetCursorPos on every WM_MOUSEMOVE, read from f1_res.dll) is off then; the proxy feeds the mouse.
+PROXY_DLL = "DINPUT.DLL"
+PROXY_SETTINGS = (("INPUT", "ALT_MOUSE_INPUT", "0"),)
+PROXY_SOURCE = paths.REPO / "tools" / "dinput"
+PROXY_BUILT = paths.HOME / "build" / PROXY_DLL
+
+
+def build_proxy(zig: str) -> Path:
+    """Compile tools/dinput into HOME/build/DINPUT.DLL with zig (a 32-bit DLL, as the exe is)."""
+    PROXY_BUILT.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        zig,
+        "cc",
+        "-target",
+        "x86-windows-gnu",
+        "-O2",
+        "-shared",
+        "dinput_proxy.c",
+        "dinput.def",
+        "-o",
+        str(PROXY_BUILT),
+    ]
+    out = subprocess.run(cmd, cwd=PROXY_SOURCE, capture_output=True, text=True, check=False)
+    if out.returncode != 0 or not PROXY_BUILT.exists():
+        raise InstanceError(f"zig failed: {out.stderr.strip() or out.stdout.strip()}")
+    return PROXY_BUILT
+
+
+def set_input(mode: str) -> dict[str, str]:
+    """`proxy`: the proxy into the instance (background input); `direct`: out again (SendInput, the game in front)."""
+    if running_from_instance():
+        raise InstanceError("the game is running from the instance; stop it first")
+    target = INSTANCE_DIR / PROXY_DLL
+    if mode == "proxy":
+        if not PROXY_BUILT.exists():
+            raise InstanceError(f"no {PROXY_BUILT}; build it: python -m f1.instance input build ZIG")
+        shutil.copy2(PROXY_BUILT, target)
+    else:
+        target.unlink(missing_ok=True)
+    settings = PROXY_SETTINGS if mode == "proxy" else (("INPUT", "ALT_MOUSE_INPUT", "1"),)
+    path = INSTANCE_DIR / "f1_res.ini"
+    path.write_bytes(set_ini_values(path.read_bytes().decode("latin1"), settings).encode("latin1"))
+    return {"mode": mode, "dll": str(target) if target.exists() else "", "ALT_MOUSE_INPUT": settings[0][2]}
 
 
 def music_on() -> None:
@@ -364,11 +411,22 @@ def main(argv: list[str]) -> int:
     b.add_argument("--size", type=parse_size, help="the game's resolution WxH (default: the largest that fits)")
     sub.add_parser("configure").add_argument("--size", type=parse_size)
     sub.add_parser("check")
+    i = sub.add_parser("input", help="background input through the DINPUT.DLL proxy, or direct (SendInput)")
+    i.add_argument("mode", choices=("build", "proxy", "direct"))
+    i.add_argument("zig", nargs="?", help="build: the zig executable")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "build":
             m = build(args.force, args.game, args.size)
             print(json.dumps({k: v for k, v in m.items() if k not in ("steam_fingerprint", "copied")}, indent=1))
+            return 0
+        if args.cmd == "input":
+            if args.mode == "build":
+                if not args.zig:
+                    raise InstanceError("build needs the zig executable: python -m f1.instance input build ZIG")
+                print(build_proxy(args.zig))
+            else:
+                print(json.dumps(set_input(args.mode), indent=1))
             return 0
         if args.cmd == "configure":
             print(json.dumps(configure(args.size), indent=1))
