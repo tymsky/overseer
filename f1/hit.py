@@ -14,6 +14,9 @@ The engine's walk, for a point (x, y) on the map's elevation:
 3. From the last candidate back: the result is each one passed (the player too when wanted) until one has 0x01 and
    not 0x04 and is no dead or knocked-out critter; so with none such, the result is the first one passed last.
 
+With the high-resolution patch (f1_res) the list is the patch's own (f1/scene.py whole_grid): every tile of the
+grid, no window; the rest is the same.
+
 Where 1.1 differs from the port: its window does not check a tile against the grid (a tile off the grid reads past
 objectTable); the port skips such tiles. Its roof test reads the roof's frame without a bounds check; the port
 answers no pixel outside the frame.
@@ -141,12 +144,13 @@ def candidates(x: int, y: int, snap: Snapshot, kind: int = -1, pool: list[Obj] |
     ox, oy = snap.window_origin
     upper_left = tile_num(x - ox, y - oy, snap.camera, ignore_bounds=True)
     window = snap.window_offsets[snap.center_tile & 1]
+    inside = (lambda t: True) if snap.whole_grid else (lambda t: t - upper_left in window)
     if pool is None:
-        tiles = sorted(t for t in snap.by_tile if t - upper_left in window)
+        tiles = sorted(t for t in snap.by_tile if inside(t))
         pool = [o for t in tiles for o in snap.by_tile[t]]
     out = []
     for obj in pool:
-        if not 0 <= obj.tile < GRID_SIZE or obj.tile - upper_left not in window:
+        if not 0 <= obj.tile < GRID_SIZE or not inside(obj.tile):
             continue
         if obj.elevation != snap.elevation or (kind != -1 and obj.kind != kind) or is_egg(obj, snap):
             continue

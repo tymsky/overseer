@@ -81,6 +81,7 @@ class Snapshot:
     covers: tuple[tuple[int, int, int, int], ...] = ()  # visible windows above the map view: (left, top, w, h)
     notes: list[str] = field(default_factory=list)
     window_origin: tuple[int, int] = (320, 240)  # the window's upper-left tile is at (x - this[0], y - this[1])
+    whole_grid: bool = False  # the hit test visits every tile (f1_res's replacement of the list), no window
     _objects: dict = field(default_factory=dict, repr=False)
 
     def objects(self, elevation: int | None = None) -> list[Obj]:
@@ -113,6 +114,23 @@ WINDOW_CODE = {
     "columns": (0x47DD50, bytes.fromhex("833c03"), 1),  # cmp dword [ebx + eax], 20
 }
 WINDOW_DEFAULTS = {"x": 320, "y": 240, "rows": 30, "columns": 20}
+
+
+# object_under_mouse's call of obj_create_intersect_list. The high-resolution patch (f1_res) redirects it to its own
+# list: every tile of the grid in ascending order, each tile's objects in list order (stopping at a higher
+# elevation), of the type wanted, not the egg, each tested with the exe's obj_intersects_with; with its fog of war
+# off its filter passes everything (static, the dll read with capstone; measured live: 16 of 16 points where the
+# window disagreed with the game).
+INTERSECT_CALL = 0x4449C6
+INTERSECT_LIST = 0x47DCC0
+
+
+def whole_grid(mem: GameMemory) -> bool:
+    """object_under_mouse calls another list than the exe's (the call's target read from the running code)."""
+    raw = mem.read(INTERSECT_CALL, 5)
+    if raw[0] != 0xE8:
+        return True
+    return INTERSECT_CALL + 5 + int.from_bytes(raw[1:], "little", signed=True) != INTERSECT_LIST
 
 
 def window_constants(mem: GameMemory) -> tuple[dict[str, int], list[str]]:
@@ -238,7 +256,7 @@ def _snapshot(mem: GameMemory, cam: Camera) -> Snapshot:
         per_elevation = mem.u32(g("squares") + 4 * elevation)
         squares = struct.unpack("<10000I", mem.read(per_elevation, 40000)) if per_elevation else ()
     return Snapshot(cam, elevation, g("tile_center_tile"), dude, egg, by_tile, width, windows, roofs, squares,
-                    square_width or 100, covers(mem), notes, origin)  # fmt: skip
+                    square_width or 100, covers(mem), notes, origin, whole_grid(mem))  # fmt: skip
 
 
 def to_json(snap: Snapshot) -> dict:
@@ -260,6 +278,7 @@ def to_json(snap: Snapshot) -> dict:
         "covers": [list(c) for c in snap.covers],
         "notes": snap.notes,
         "window_origin": list(snap.window_origin),
+        "whole_grid": snap.whole_grid,
     }
 
 
@@ -272,5 +291,5 @@ def from_json(d: dict) -> Snapshot:
         Obj(**d["egg"]) if d["egg"] else None, by_tile, d["update_width"],
         (frozenset(d["window_offsets"][0]), frozenset(d["window_offsets"][1])), d["roofs_visible"],
         tuple(d["roof_squares"]), d["square_width"], tuple(tuple(c) for c in d.get("covers", [])), d["notes"],
-        tuple(d.get("window_origin", (320, 240))),
+        tuple(d.get("window_origin", (320, 240))), d.get("whole_grid", False),
     )  # fmt: skip

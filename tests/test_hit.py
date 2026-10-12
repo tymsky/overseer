@@ -205,3 +205,15 @@ def test_actor_predict_logs_its_aim() -> None:
     fake = SimpleNamespace(scene=lambda: snap([o]), log=log)
     point = Actor.predict(fake, o.address)
     assert point is not None and events[0][0] == "aim"
+
+
+def test_the_high_resolution_patch_visits_every_tile() -> None:
+    """f1_res's list has no window: a tall object far below the point is still hit."""
+    t = 100 * 200 + 100
+    o = obj(1, t, 0x2000001)
+    s = snap([o])
+    s.window_offsets = (frozenset(), frozenset())
+    x, y = centre(t)
+    assert hit.under(x, y - 10, s) is None
+    s.whole_grid = True
+    assert hit.under(x, y - 10, s).address == o.address
