@@ -233,16 +233,17 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             group = [target] + [c for c in others if noticed_by(c, s.dude.tile)]
             if len(group) > 1 and lure(actor, target, others):
                 continue
-            chance = odds.against(actor, group)
+            chance = odds.assess(actor, group, [c for c in left if c not in group])
             log.emit(
                 "odds", foes=len(group), win=round(chance.win, 3), hp_left=round(chance.hp_left, 1),
                 turns=round(chance.turns, 1), rounds=round(chance.rounds, 1), hit=chance.hit, foe_hit=chance.foe_hit,
+                death_high=chance.death_high, rule=odds.RULE,
             )  # fmt: skip
-            if chance.win < ODDS_TO_FIGHT:
+            if not odds.accepted(chance, ODDS_TO_FIGHT):
                 if len(group) > 1 and backs < BACK_OFFS and back_off(actor, target, left):
                     backs += 1  # from another side the target may come alone
                     continue
-                return done(f"odds {chance.win:.0%}: not a fight to begin")
+                return done(f"odds {chance.win:.0%} (death bound {chance.death_high}): not a fight to begin")
             session.press("a")  # start combat; the fight loop takes it from there
             time.sleep(1.0)
             if not actor.in_combat():

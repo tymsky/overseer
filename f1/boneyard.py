@@ -348,12 +348,13 @@ def the_mother(actor: Actor) -> bool:
     xp0 = experience(actor)
     mother = quests.find_critter(actor, "Mother Deathclaw")
     if mother is not None and not actor.in_combat():  # a fight on computed odds (f1.odds, from the stairs)
-        chance = odds.against(actor, [mother])
+        chance = odds.assess(actor, [mother])
         actor.log.emit(
             "odds", foes=1, win=round(chance.win, 3), hp_left=round(chance.hp_left, 1), turns=round(chance.turns, 1),
             hit=chance.hit, foe_hit=chance.foe_hit, weapon=getattr(actor.weapon(), "pid", None),
+            death_high=chance.death_high, rule=odds.RULE,
         )  # fmt: skip
-        if chance.win < quests.ODDS_TO_FIGHT:
+        if not odds.accepted(chance, quests.ODDS_TO_FIGHT):
             return False
     for _ in range(8):
         if actor.in_combat():

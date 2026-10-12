@@ -83,6 +83,8 @@ class Odds:
     hit: int  # the player's to-hit against the first foe
     foe_hit: int  # the first foe's against the player
     trials: int = field(default=0, repr=False)
+    death_high: float | None = None  # the risk model's upper 95 % bound of the player's death (f1.risk)
+    accept: bool | None = None  # the risk model's verdict (None: the old rule decides, `accepted`)
 
 
 def _hits(rng: random.Random, a: Attacker, target_dt: int, target_dr: int) -> int:
@@ -245,6 +247,25 @@ def against(actor, foes: list, option: weapons.Option | None = None) -> Odds:
             )
         )
     return fight(me, them)
+
+
+# the gate's rule: "risk" (f1.risk: the upper 95 % bound of the player's death under risk.RISK_MAX), or "odds" (the
+# rule before it: this module's win chance at least the caller's floor; kept for comparisons)
+RULE = "risk"
+
+
+def assess(actor, foes: list, others: list = (), rule: str | None = None) -> Odds:  # type: ignore[assignment]
+    """The fight's numbers by the gate's rule: the risk model's (with its verdict) or the old odds'."""
+    if (rule or RULE) == "risk":
+        from f1 import risk
+
+        return risk.as_odds(risk.against(actor, foes, list(others)))
+    return against(actor, foes)
+
+
+def accepted(o: Odds, floor: float) -> bool:
+    """Whether the fight is entered: the risk model's verdict when it gave one, else a win chance of FLOOR."""
+    return o.accept if o.accept is not None else o.win >= floor
 
 
 def main(argv: list[str]) -> int:
