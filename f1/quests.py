@@ -33,6 +33,7 @@ from f1 import (
     worldmap,
 )
 from f1 import engine_map as em
+from f1 import talk as talk_mod
 from f1.actions import PID_STIMPAK, Actor
 from f1.telemetry import EventLog
 
@@ -662,20 +663,17 @@ def find_critter(actor: Actor, name: str, near: int | None = None):
     return min(found, key=lambda c: geometry.distance(c.tile, origin)) if found else None
 
 
-def talk(
-    actor: Actor, name: str, plan: list[str], max_legs: int = 12, strict: bool = False, near: int | None = None
-) -> list | None:
-    """Walk up to the critter called `name` on this map and follow a dialogue plan; the steps (reply, options,
-    chosen). Empty when the critter is not here or no dialogue started."""
+def open_talk(actor: Actor, name: str, max_legs: int = 12, near: int | None = None, before=None) -> str:
+    """Walk up to the critter called `name` on this map and open a talk with it: "talking", or "spoke first" when
+    a talk was already open (they spoke first on seeing the player: Lasher does); else why not ("not here",
+    "refused", "too far"). `before(critter)` runs just before the click."""
     for _ in range(max_legs):
-        if actor.snap().screen == "dialogue":  # they spoke first on seeing the player (Lasher does): answer by plan
-            if strict:
-                return dialogue.converse_strict(actor.mem, plan, log=actor.log)
-            return dialogue.converse(actor.mem, plan, log=actor.log)
+        if actor.snap().screen == "dialogue":
+            return "spoke first"
         who = find_critter(actor, name, near)
         if who is None:
             actor.log.emit("talk", name=name, found=False)
-            return []
+            return "not here"
         s = actor.snap()
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
         # Beside them by a real path (a wall between: the way round, through the door); across a desk, the
@@ -690,15 +688,45 @@ def talk(
         # Within a few hexes a click to talk lets the game walk the rest: Gizmo behind his desk, whose last hex
         # the engine never walked to (24 tries from 3 hexes), talked from there.
         if beside or geometry.distance(who.tile, s.dude.tile) <= 4:
+            if before is not None:
+                before(who)
             out = actor.talk_to(who)
             if out.ok:
-                if strict:  # only plan lines; an unknown node stops with the talk open (None)
-                    return dialogue.converse_strict(actor.mem, plan, log=actor.log)
-                return dialogue.converse(actor.mem, plan, log=actor.log)
+                return "talking"
             if beside or out.reason == "answered by a float":  # they will not talk now: no walk closer for it
-                return []
+                return "refused"
         nav.go_to(actor, goals, max_steps=8, fight=True)
-    return []
+    return "too far"
+
+
+def talk(
+    actor: Actor, name: str, plan: list[str], max_legs: int = 12, strict: bool = False, near: int | None = None
+) -> list | None:
+    """Walk up to the critter called `name` on this map and follow a dialogue plan; the steps (reply, options,
+    chosen). Empty when the critter is not here or no dialogue started. Plan items are phrases matched against the
+    options' message texts, or "#N" for message N (f1.dialogue.plan_index)."""
+    if open_talk(actor, name, max_legs, near) not in ("talking", "spoke first"):
+        return []
+    if strict:  # only plan lines; an unknown node stops with the talk open (None)
+        return dialogue.converse_strict(actor.mem, plan, log=actor.log)
+    return dialogue.converse(actor.mem, plan, log=actor.log)
+
+
+def talk_by_nodes(actor: Actor, name: str, plan, entry: str = "", max_legs: int = 12, near: int | None = None) -> dict:
+    """Walk up to the critter called `name` and follow the talk by its script's nodes (f1.talk.follow): PLAN is a
+    route of option messages or a plan by reply. With `entry` (the procedure the talk starts in), its first screen
+    is predicted from the variables read just before the click."""
+    first: dict = {}
+
+    def predict(who) -> None:
+        if entry:
+            first["screens"] = talk_mod.entry(actor.mem, scripts.script_of(actor.mem, who.address), entry, who.address)
+
+    how = open_talk(actor, name, max_legs, near, predict)
+    if how not in ("talking", "spoke first"):
+        return {"ok": False, "why": how, "steps": []}
+    win32.wait_for(lambda: bool(dialogue.read(actor.mem).entries), 4.0)
+    return {"opened": how, **talk_mod.follow(actor.mem, plan, actor.log, first=first.get("screens"))}
 
 
 def main(argv: list[str]) -> int:

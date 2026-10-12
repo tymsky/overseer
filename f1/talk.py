@@ -14,10 +14,14 @@ which stops a walk (f1.nav.go_to returns "left the map (dialogue, ...)"). ON_SIG
 reply that opened it, the route that answers it and what to do after; `walk` answers such a talk and walks on. A
 talk ON_SIGHT does not name, or a reply it does not name, is never answered blind: the walk stops with it open.
 
-Static evidence for ON_SIGHT (f1.intdump): Junktown's gate guards (jtgengrd, maps 10 and 12: JUNKENT, JUNKKILL)
-open their talk in critter_p_proc when they see the player within 12 hexes with a weapon in either hand (item
-subtype 3) and their local 4 at 0; the talk's first node (110) asks for it put away, and a timed event 1 game second
-later floats a warning if it is still in hand and 0.5 s after that sets the guard to attack.
+Static evidence for ON_SIGHT (f1.intdump): Junktown's guards (jtgengrd) open their talk in critter_p_proc on map 12
+(JUNKKILL, Killian's street) when they see the player within 12 hexes with a weapon in either hand (item subtype 3),
+their local 4 at 0, map_var(2) at 0, HIRED_BY_KILLIAN and CAPTURE_GIZMO at 0; the talk's first node (110) asks for
+the weapon put away, and a timed event 1 game second later floats a warning if it is still in hand and 0.5 s after
+that sets the guard to attack.
+
+The first screen of a talk can be predicted too, before it opens: `entry` is the procedure the talk starts in (the
+script's talk procedure, or the one it calls), its conditions read before the click.
 """
 
 import time
@@ -65,7 +69,8 @@ def _names(positions) -> list[str]:
 
 
 def follow(mem: GameMemory, route: Sequence[int] | Mapping[int, int], log=None, intelligence: int | None = None,
-           close: bool = True, choose=dialogue.choose, max_steps: int = MAX_STEPS) -> dict:  # fmt: skip
+           close: bool = True, choose=dialogue.choose, max_steps: int = MAX_STEPS,
+           first: set | None = None) -> dict:  # fmt: skip
     """The open talk followed by ROUTE: option messages in order, or a plan by reply (the reply's message -> the
     option's message, for talks whose replies branch on what is not read); each line's [Done] taken on the way.
     Every step: the screen read from memory against the predicted one. Ends when the talk ends, or when the route is
@@ -80,7 +85,7 @@ def follow(mem: GameMemory, route: Sequence[int] | Mapping[int, int], log=None, 
     iq = chargen.special(mem)[4] if intelligence is None else intelligence
     left = [] if by_reply is not None else list(route)
     steps: list[dict] = []
-    predicted: set | None = None  # None: the talk located afresh (its first screen)
+    predicted: set | None = first  # None: the talk located afresh (its first screen not predicted: `entry`)
     rooted = False  # the callers of the screen are known (it was reached from an option)
     out = {"script": d.script, "steps": steps}
     for _ in range(max_steps):
@@ -142,6 +147,7 @@ def follow(mem: GameMemory, route: Sequence[int] | Mapping[int, int], log=None, 
         choose(mem, i)
     checked = [s for s in steps if "ok" in s]
     out["predicted"] = f"{sum(s['ok'] for s in checked)}/{len(checked)}"
+    out["exact"] = sum(s["ok"] and len(s["predicted"]) == 1 for s in checked)  # one screen predicted, and it came
     taken = [s["proc_ok"] for s in steps if "proc_ok" in s]
     out["procs"] = f"{sum(taken)}/{len(taken)}"
     done = (None,) if by_reply is not None else (None, "the route done, a reply waits")
@@ -149,6 +155,12 @@ def follow(mem: GameMemory, route: Sequence[int] | Mapping[int, int], log=None, 
     if close and dialogue.read(mem).active and out["ok"]:
         out["closed"] = dialogue.close(mem)
     return out
+
+
+def entry(mem: GameMemory, script: str, procedure: str, target: int) -> set:
+    """The first screens a talk that starts in PROCEDURE of SCRIPT will show, its conditions read now (before the
+    talk opens) from the critter at TARGET; for follow's `first`."""
+    return talktree.first(talktree.tree(script), procedure, reader(mem, target))
 
 
 @dataclass(frozen=True)
