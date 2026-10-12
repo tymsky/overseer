@@ -319,10 +319,13 @@ def screen_message(nodes: dict[str, Node], position) -> tuple[int | None, int | 
 
 def options_after(nodes: dict[str, Node], position: Position) -> tuple[Item, ...]:
     """A reply's options: the option items after it in its node up to the next screen (a reply's options follow it in
-    code)."""
+    code; the other replies of an if/else chain may stand between them: `reply A if C else reply B`, then the
+    options)."""
     _callers, name, k = position
     out = []
     for it in nodes[name].items[k + 1 :]:
+        if it.kind == "reply" and not out:
+            continue  # the other branch's reply: the options after it are this reply's too
         if it.kind in SCREENS:
             break
         if it.kind == "option":

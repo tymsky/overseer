@@ -179,6 +179,11 @@ def test_aradesh_s_quest_branch_is_predicted_from_his_reaction() -> None:
     assert as_screens(talktree.first(nodes, "aradesh19", reaction(2))) == [163]
     assert as_screens(talktree.first(nodes, "aradesh19", reaction(1))) == [164]
     assert as_screens(talktree.first(nodes, "aradesh19")) == [163, 164]
+    # the options follow the last of the replies his reaction picks from: each reply has them all
+    for message in (101, 102, 103):
+        at = talktree.locate(nodes, 33, message)[0]
+        assert [o.message for o in talktree.options_after(nodes, at)] == list(range(104, 111))
+    assert talktree.expected_options(nodes, talktree.locate(nodes, 33, 102)[0], 4) == (105, 106, 107, 108)
     # the quest's node says its line and sets the seed (talked into it: 199 -> aradesh29)
     sets = [i.text for i in nodes["aradesh29"].items if i.kind == "set"]
     assert sets == ["set_global_var(RADSCORPION_SEED, 1)"]
