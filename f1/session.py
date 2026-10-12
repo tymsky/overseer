@@ -19,8 +19,11 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from f1 import capture, clock, hooks, inputs, instance, paths, state, win32
 from f1 import engine_map as em
@@ -38,6 +41,38 @@ LOG = EventLog(paths.RUNS / "sessions.jsonl")
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+
+
+@dataclass
+class _DriverOwner:
+    pid: int
+    thread: int
+    handle: BinaryIO
+    depth: int = 1
+
+
+_driver_mutex = threading.Lock()
+_driver_owners: dict[Path, _DriverOwner] = {}
+
+
+def _take_driver_lock(handle: BinaryIO) -> None:
+    handle.seek(0)
+    if sys.platform == "win32":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _driver_description(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "lock metadata unavailable"
+
 
 # Key name -> (scan code, extended). Scan codes are what the game's DirectInput keyboard reads.
 KEYS = {"esc": (0x01, False), "enter": (0x1C, False), "space": (0x39, False), "tab": (0x0F, False)}
@@ -62,7 +97,7 @@ def game_pid() -> int | None:
 
 
 def python_alive(pid: int) -> bool:
-    """A live Python process with this pid (not a later process that got the number of a dead one)."""
+    """Whether this pid currently belongs to a process whose executable is named Python."""
     image = win32.process_image(pid) if win32.is_alive(pid) else None
     return bool(image) and Path(image).name.lower().startswith("python")
 
@@ -70,23 +105,46 @@ def python_alive(pid: int) -> bool:
 @contextlib.contextmanager
 def driver_lock(what: str):
     """One driver of the game at a time: a second route, quest command or other driver on the same game would
-    interleave its input with the first (a timed-out shell had left a route playing). A lock whose
-    process is gone is taken over."""
-    try:
-        other = json.loads(DRIVER_LOCK.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        other = None
-    if other and other.get("pid") != os.getpid() and python_alive(int(other.get("pid", 0))):
-        raise SessionError(f"another driver has the game: {other}")
-    DRIVER_LOCK.parent.mkdir(parents=True, exist_ok=True)
-    mine = {"pid": os.getpid(), "what": what, "since": datetime.datetime.now().astimezone().isoformat()}
-    DRIVER_LOCK.write_text(json.dumps(mine), encoding="utf-8")
+    interleave its input with the first. The OS releases the guard when its handle closes, including after a crash;
+    stale JSON or a reused pid cannot keep it held. Nested calls from the owning thread share the guard."""
+    path, pid, thread = DRIVER_LOCK.resolve(), os.getpid(), threading.get_ident()
+    with _driver_mutex:
+        owner = _driver_owners.get(path)
+        if owner is not None and owner.pid != pid:  # discard handles inherited by a forked child
+            owner.handle.close()
+            del _driver_owners[path]
+            owner = None
+        if owner is not None:
+            if owner.thread != thread:
+                raise SessionError(f"another driver has the game: {_driver_description(path)}")
+            owner.depth += 1
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Keep this file: unlinking a guard can let another process lock a different file at the same path.
+            handle = path.with_name(path.name + ".guard").open("a+b")
+            try:
+                _take_driver_lock(handle)
+            except OSError as e:
+                handle.close()
+                raise SessionError(f"another driver has the game: {_driver_description(path)}") from e
+            try:
+                mine = {"pid": pid, "what": what, "since": datetime.datetime.now().astimezone().isoformat()}
+                path.write_text(json.dumps(mine), encoding="utf-8")
+            except BaseException:
+                handle.close()
+                raise
+            _driver_owners[path] = _DriverOwner(pid, thread, handle)
     try:
         yield
     finally:
-        with contextlib.suppress(OSError, ValueError):
-            if json.loads(DRIVER_LOCK.read_text(encoding="utf-8")).get("pid") == os.getpid():
-                DRIVER_LOCK.unlink()
+        with _driver_mutex:
+            owner = _driver_owners[path]
+            owner.depth -= 1
+            if owner.depth == 0:
+                with contextlib.suppress(OSError):
+                    path.unlink()
+                del _driver_owners[path]
+                owner.handle.close()
 
 
 def game_window(pid: int) -> int | None:
