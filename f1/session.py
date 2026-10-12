@@ -105,7 +105,7 @@ def use_copy(exe: Path | None, input_name: str | None = None, headless: bool = F
 
 
 def game_dir() -> Path:
-    """The folder of the copy the play code drives (its DATA\SAVEGAME holds that copy's slots)."""
+    """The folder of the copy the play code drives (its DATA\\SAVEGAME holds that copy's slots)."""
     return Path(_copy["exe"]).parent if "exe" in _copy else EXE_PATH.parent
 
 
