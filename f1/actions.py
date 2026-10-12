@@ -137,6 +137,8 @@ PAN_HOLD_S, PAN_GAP_S = 0.03, 0.03
 # A walk whose player keeps animating on one hex this long has stopped (MOUNTN2: a leg that never left
 # its hex ran its whole 23.5 s timeout, the frames still changing; a door on the way opens in about 2 s)
 TILE_STALL_S = 4.0
+STILL_READS = 3  # a following view at rest: this many equal reads in a row
+FOLLOW_SLACK = (0.19, 0.21)  # a following view resting farther from the player (share of its size) was moved away
 PAN_MAX_KEYS = 30  # a longer way (a camera far from the player) is jumped with Home
 
 
@@ -259,6 +261,7 @@ class Actor:
 
     def walk_to(self, tile: int, timeout_s: float = 12.0) -> Outcome:
         """Walk the player to `tile` by a click on its hex in move mode; done when the player stands there, still."""
+        self.still_view()  # a following view still gliding would carry the hex away from the click
         before = self.snap()
         pre = {"from": before.dude.tile if before.dude else None, "to": tile, "mode": before.mouse_mode}
         self.log.emit("action_start", action="walk_to", **pre)
@@ -288,7 +291,9 @@ class Actor:
         `pan`, the view slides on to the leg's end while the player walks; back when the rest of the leg is less
         than `lead_s` of walking at the pace seen, so the next click finds the player still going. Ok when the
         player got there or is that near and moving. A way walked in stops lost a stop and a 0.3 s look for
-        stillness a leg, and a slide of the view after it (Shady Sands: 9 of 23 s)."""
+        stillness a leg, and a slide of the view after it (Shady Sands: 9 of 23 s). A view that follows the player
+        by itself (session.camera_follows) is let come to rest before the click, and never panned."""
+        self.still_view()
         before = self.snap()
         pre = {"from": before.dude.tile if before.dude else None, "to": tile, "mode": before.mouse_mode, "leg": True}
         self.log.emit("action_start", action="walk_to", **pre)
@@ -305,7 +310,7 @@ class Actor:
             return self._end(False, "cursor did not land", pre | {"cursor": [cx, cy]})
         t0 = time.monotonic()
         self.click()
-        if pan:
+        if pan and not session.camera_follows():
             self.center_view(tile)  # while the player walks: the view is still for the next leg's click
         start, got, why = before.dude.tile, False, "did not arrive"
         with clock.fast(self.pid):
@@ -385,7 +390,20 @@ class Actor:
         and every click is computed from it. It slides there by the game's own scrolling, arrow keys in passes read
         back, so a recording pans where Home jumped; Home (game.c) only for a way longer than
         PAN_MAX_KEYS presses. A map's edge stops both (HRP's edges clamp a Full HD view sooner): an axis that fell
-        short of its keys' way by more than half a step met one and is not asked again, the view stays where it got."""
+        short of its keys' way by more than half a step met one and is not asked again, the view stays where it got.
+        A copy whose view follows the player by itself (session.camera_follows) is not panned: the view is let come
+        to rest, and Home is pressed only when it rests away from the player (moved by someone else: a dialog, the
+        screen's edge), never for a leg's end."""
+        if session.camera_follows():
+            self.still_view()
+            s = self.snap()
+            if tile is None and s.dude is not None and s.screen == "map":
+                x, y = geometry.tile_center(s.dude.tile, s.camera)
+                far_x, far_y = FOLLOW_SLACK[0] * s.camera.view_width, FOLLOW_SLACK[1] * s.camera.view_height
+                if abs(x - s.camera.view_width / 2) > far_x or abs(y - s.camera.view_height / 2) > far_y:
+                    session.press("home")
+                    self.still_view()
+            return
         stuck_x = stuck_y = False
         for _ in range(3):
             s = self.snap()
@@ -409,6 +427,22 @@ class Actor:
             x2, y2 = geometry.tile_center(after.dude.tile if tile is None else tile, after.camera)
             stuck_x = stuck_x or abs(x2 - x) < (abs(nx) - 0.5) * PAN_STEP[0]
             stuck_y = stuck_y or abs(y2 - y) < (abs(ny) - 0.5) * PAN_STEP[1]
+
+    def still_view(self, timeout_s: float = 3.0) -> bool:
+        """On a copy whose view follows the player (session.camera_follows): wait until the view rests (unchanged
+        over STILL_READS reads 30 ms apart), so a click computed from it lands where aimed. True at once elsewhere."""
+        if not session.camera_follows():
+            return True
+        last, same, end = None, 0, time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            c = self.snap().camera
+            now = (c.offx, c.offy, c.tile_x, c.tile_y)
+            same = same + 1 if now == last else 0
+            if same >= STILL_READS:
+                return True
+            last = now
+            time.sleep(0.03)
+        return False
 
     def _camera_settled(self) -> int:
         """The camera's tile once it stopped moving (queued keys scroll on for a moment)."""

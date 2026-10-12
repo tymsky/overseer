@@ -94,19 +94,24 @@ class SessionError(RuntimeError):
 _copy: dict = {}  # another copy of the game the play code drives instead of the instance (use_copy)
 
 
-def use_copy(exe: Path | None, input_name: str | None = None, headless: bool = False) -> None:
+def use_copy(exe: Path | None, input_name: str | None = None, headless: bool = False, follows: bool = False) -> None:
     """Point the play code at another copy of the game: the process running EXE, fed through the input memory
-    INPUT_NAME (the DINPUT.DLL proxy's), and HEADLESS when its window is never shown (it draws into memory). None:
-    back to the instance."""
+    INPUT_NAME (the DINPUT.DLL proxy's), and HEADLESS when its window is never shown (it draws into memory). FOLLOWS:
+    that copy's view follows the player by itself (camera_follows). None: back to the instance."""
     _copy.clear()
     if exe is not None:
-        _copy.update(exe=Path(exe), headless=headless)
+        _copy.update(exe=Path(exe), headless=headless, follows=follows)
     inputs.use_copy(input_name if exe is not None else None)
 
 
 def game_dir() -> Path:
     """The folder of the copy the play code drives (its DATA\SAVEGAME holds that copy's slots)."""
     return Path(_copy["exe"]).parent if "exe" in _copy else EXE_PATH.parent
+
+
+def camera_follows() -> bool:
+    """The copy's view glides after the player by itself (use_copy's FOLLOWS): the play code need not pan it."""
+    return bool(_copy.get("follows"))
 
 
 def game_pid() -> int | None:
