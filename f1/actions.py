@@ -27,6 +27,7 @@ from f1 import (
     nav,
     odds,
     paths,
+    perception,
     scene,
     scripts,
     session,
@@ -79,6 +80,10 @@ REST = {"10 minutes": 0, "30 minutes": 1, "1 hour": 2, "2 hours": 3, "3 hours": 
         "6 hours": 7, "until morning": 8, "until noon": 9, "until evening": 10, "until midnight": 11,
         "until healed": 12}  # pipboy.c rest durations, in their order  # fmt: skip
 ITEM_STATE_SIZE, ITEM_STATE_ACTION = 0x18, 0x10  # intface.c InterfaceItemState
+ITEM_STATE_DISABLED = 4  # InterfaceItemState.isDisabled (a byte): the button is left disabled by intface_enable
+BUTTON_FLAG_DISABLED = 0x08  # gnw_types.h: a disabled window button ignores clicks
+RIGHT_CLICKS_TO_CROSSHAIR = 3  # gmouse_3d_toggle_mode: a right click on the map cycles move, arrow, crosshair
+FORCED_FLOOR = 0.8  # f1.odds' old rule only: a fight a foe started is left below this win chance
 ITEM_ACTION_PRIMARY, ITEM_ACTION_RELOAD = 1, 5
 PROTO_BASE_STATS, STAT_COUNT, STAT_MAX_HP, STAT_MAX_AP = 0x24, 35, 7, 8  # critter proto: base, bonus stats
 PROTO_CRITTER_FLAGS = 0x20  # the player prototype's critter flags: bit 0 sneaking
@@ -221,6 +226,9 @@ class Held(NamedTuple):
 
 class Actor:
     """Sends input to the running game through the guard and checks results in its memory."""
+
+    # a fight a foe started that the gate refuses: left by the nearest exit (a route that must stay sets it False)
+    leave_refused = True
 
     def __init__(self, pid: int, log: EventLog) -> None:
         self.pid = pid
@@ -1488,12 +1496,9 @@ class Actor:
             session.press("b")
             armed = lambda: (h := self.active_item()) is None or weapons.weapon(h) is not None
             win32.wait_for(armed, 1.0, 0.05)
-        if s.mouse_mode != MOUSE_CROSSHAIR:
-            self.point(*self.item_button())
-            self.click()
-            if not win32.wait_for(lambda: self.mem.glob("gmouse_3d_current_mode") == MOUSE_CROSSHAIR, 1.5, 0.05):
-                return self._end(False, "no crosshair after the item button", pre, "attack")
         cx, cy = geometry.tile_center(target.tile, s.camera)
+        if s.mouse_mode != MOUSE_CROSSHAIR and not self.arm_crosshair(cx, cy):
+            return self._end(False, "no crosshair after the item button", pre, "attack")
         line = self.mem.glob("disp_start")
         blocked = lambda: any(knowledge.says(m, *AIM_BLOCKED) for m in state.messages_since(self.mem, line))
         offsets = list(AIM_OFFSETS)
@@ -1525,6 +1530,99 @@ class Actor:
         }
         return self._end(True, "swung", detail, "attack")
 
+    def item_state(self) -> dict:
+        """The active hand's InterfaceItemState and the item button's window flags: why a click on it did nothing."""
+        hand = self.mem.glob("itemCurrentItem")
+        base = em.GLOBALS["itemButtonItems"].address + ITEM_STATE_SIZE * hand
+        raw = self.mem.read(base, ITEM_STATE_SIZE)
+        bar = self.mem.glob("interfaceWindow")
+        button = next((b for b in ui.buttons(self.mem, bar) if b.codes[5] == ITEM_BUTTON_CODE), None)
+        return {
+            "hand": hand, "item": struct.unpack_from("<I", raw, 0)[0], "disabled": raw[ITEM_STATE_DISABLED],
+            "weapon": raw[ITEM_STATE_DISABLED + 1], "action": struct.unpack_from("<i", raw, ITEM_STATE_ACTION)[0],
+            "button_flags": button.flags if button else None,
+            "button_disabled": bool(button.flags & BUTTON_FLAG_DISABLED) if button else None,
+        }  # fmt: skip
+
+    def arm_crosshair(self, x: int, y: int) -> bool:
+        """The attack cursor: the item button (intface.c intface_use_item), else right clicks on the map at (x, y),
+        which cycle the mouse's modes move, arrow, crosshair (gmouse.c gmouse_3d_toggle_mode; in combat the crosshair
+        is skipped only for an item that is no weapon). Measured: in the radscorpion caves, after a critical miss
+        dropped the pistol, the item button gave no crosshair for 11 attacks over 9 turns, the bar showing the
+        empty hand, and the fight only ended its turns (HP 43 to 1); the right clicks do not need the bar's button."""
+        crosshair = lambda: self.mem.glob("gmouse_3d_current_mode") == MOUSE_CROSSHAIR
+        self.point(*self.item_button())
+        self.click()
+        if win32.wait_for(crosshair, 1.5, 0.05):
+            return True
+        try:
+            why = self.item_state()
+        except ReadError as e:
+            why = {"error": str(e)}
+        self.point(x, y)
+        for n in range(RIGHT_CLICKS_TO_CROSSHAIR):
+            self.click(right=True)
+            if win32.wait_for(crosshair, 0.6, 0.05):
+                self.log.emit("crosshair", how="right click", clicks=n + 1, item_button=why)
+                return True
+        self.log.emit("crosshair", how=None, clicks=RIGHT_CLICKS_TO_CROSSHAIR, item_button=why,
+                      mode=self.mem.glob("gmouse_3d_current_mode"))  # fmt: skip
+        return False
+
+    def rearm(self, s: state.Snapshot, held: Held | None, drew: bool) -> tuple[bool, Held | None, bool]:
+        """A turn's start: a hand that cannot fight made one that can. Returns (acted: the turn's loop starts again,
+        the weapon in the active hand, `drew`: the empty hand was looked at in this fight).
+        - The active hand empty (once a fight): B brings a weapon from the other hand (holstered for a town); else
+          the best way to fight from the pack (weapons.choose, the inventory's 4 AP) when it is not fists. Measured:
+          a critical miss dropped the 10mm pistol in the radscorpion caves and the fight went on with fists while
+          Brass Knuckles (4.9 to the fists' 2.1) and a Knife lay in the pack: the old check drew from the pack only
+          with an item in the active hand.
+        - An empty gun: reloaded (2 AP); with no rounds that fit, another weapon from the pack, else the empty hand
+          (an empty gun cannot even punch)."""
+        if held is None and not drew:
+            drew = True
+            if self.holster(False):
+                return True, self.weapon(), drew
+            options = self.weapon_options()
+            if options and options[0].pid is not None and s.dude.ap >= INVENTORY_AP and self.ready_weapon().ok:
+                return True, self.weapon(), drew
+        if held and weapons.uses_ammo(held.pid) and held.loaded == 0 and s.dude.ap >= weapons.RELOAD_AP:
+            loaded = self.reload()
+            if loaded.ok:
+                return True, self.weapon(), drew
+            if loaded.reason == "no ammo":  # another weapon with rounds (the inventory costs AP), else fists
+                if s.dude.ap >= INVENTORY_AP and self.ready_weapon().ok and self.weapon() not in (None, held):
+                    return True, self.weapon(), drew
+                if self.holster(True):
+                    held = None
+        return False, held, drew
+
+    def forced_group(self) -> tuple[list[state.Critter], list[state.Critter]]:
+        """A fight a foe started: its foes as the gate chooses them (those who notice the player, else the nearest)
+        and every other foe of the map an onlooker that may join."""
+        left = self.enemies()
+        if not left:
+            return [], []
+        at = self.snap().dude.tile
+        group = [c for c in left if perception.notices(c.tile, c.rotation, perception.perception_of(c.pid), at)]
+        group = group or [min(left, key=lambda c: geometry.distance(c.tile, at))]
+        return group, [c for c in left if c not in group]
+
+    def weigh_forced(self) -> odds.Odds | None:
+        """A fight a foe started (on a walk: nav.go_to): weighed at its start by the gate's own rule (odds.assess,
+        odds.accepted), logged as the gate logs it (`odds`, forced). None when there is no foe to weigh. Measured:
+        the risk live check's walks met 27 such fights, 7 of them over the gate's bound (2.7 to 18 %, one at 1 HP)."""
+        group, others = self.forced_group()
+        if not group:
+            return None
+        chance = odds.assess(self, group, others)
+        self.log.emit(
+            "odds", foes=len(group), others=len(others), win=round(chance.win, 3), hp_left=round(chance.hp_left, 1),
+            turns=round(chance.turns, 1), rounds=round(chance.rounds, 1), hit=chance.hit, foe_hit=chance.foe_hit,
+            death_high=chance.death_high, rule=odds.RULE, forced=True, accept=odds.accepted(chance, FORCED_FLOOR),
+        )  # fmt: skip
+        return chance
+
     def end_turn(self) -> Outcome:
         self.log.emit("action_start", action="end_turn", ap=self.snap().dude.ap)
         session.press("space")
@@ -1538,12 +1636,24 @@ class Actor:
         min_hp: int = 8,
         only: tuple[str, ...] | None = None,
         spare: frozenset[str] = frozenset(),
+        forced: bool = False,
     ) -> Outcome:
         """Fight until combat is over: shoot the nearest foe in range with a gun (or punch an adjacent one), heal
         with a stimpak below 45 % HP, end the turn when nothing more can be done. `spare`: scripts of critters that
         must not be hit: a foe with one of them beyond it on the line of fire is not shot (a missed shot flies on
-        and hits the first critter past its target with no roll, CE compute_attack: the Raiders' captive women)."""
-        self.log.emit("action_start", action="fight")
+        and hits the first critter past its target with no roll, CE compute_attack: the Raiders' captive women).
+        `forced`: a fight a foe started (no gate weighed it): weighed first (`weigh_forced`), and one the gate would
+        refuse is left by the map's nearest exit (quests.flee, as Fallout 2's way out of a forced fight) while
+        `leave_refused`; when no way out is found it is fought."""
+        self.log.emit("action_start", action="fight", forced=forced)
+        if forced and self.in_combat():
+            chance = self.weigh_forced()
+            if chance is not None and not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
+                from f1 import quests
+
+                if quests.flee(self):
+                    return self._end(False, "refused; fled", {"death_high": chance.death_high}, "fight")
+                self.log.emit("tactic", move="fight a refused fight", why="no way out")
         rounds, turn_of_enter, drew = 0, -1, False
         acted = 0  # the last round with a shot, a step or a heal: the turns since are a stall (foes out of reach)
         missed: dict[int, int] = {}  # target -> attacks whose clicks did not land
@@ -1574,25 +1684,9 @@ class Actor:
                 continue
             if s.dude.hp < min_hp:
                 return self._end(False, "hp low; stopping to keep the character alive", {"hp": s.dude.hp}, "fight")
-            held = self.weapon()
-            if held is None and not drew:  # holstered for a town: B brings the weapon from the other hand (once)
-                drew = True
-                if self.holster(False):
-                    continue
-                # neither hand holds a weapon (the bug and the recorder for Gizmo, Junktown: every attack
-                # was "no crosshair after the item button" while a guard shot HP 31 to 4): the best one, from the
-                # inventory (4 AP)
-                if self.active_item() is not None and s.dude.ap >= INVENTORY_AP and self.ready_weapon().ok:
-                    continue
-            if held and weapons.uses_ammo(held.pid) and held.loaded == 0 and s.dude.ap >= weapons.RELOAD_AP:
-                loaded = self.reload()
-                if loaded.ok:
-                    continue
-                if loaded.reason == "no ammo":  # another weapon with rounds (the inventory costs AP), else fists
-                    if s.dude.ap >= INVENTORY_AP and self.ready_weapon().ok and self.weapon() not in (None, held):
-                        continue
-                    if self.holster(True):  # an empty gun cannot even punch
-                        held = None
+            acted_now, held, drew = self.rearm(s, self.weapon(), drew)
+            if acted_now:
+                continue
             cost, reach = self.attack_cost(held), self.attack_reach(held)
             # combat.c obj_dist: a big body (multihex) is one hex nearer than its tile
             here = s.dude.tile

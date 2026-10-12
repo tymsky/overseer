@@ -253,7 +253,9 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             continue
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
         goals = {t for r in (4, 5, 6) for t in geometry.ring(target.tile, r) if t not in obs.blocked}
-        nav.go_to(actor, goals, max_steps=4, fight=True)
+        _reached, why = nav.go_to(actor, goals, max_steps=4, fight=True)
+        if why == "fight: refused; fled":  # a foe began a fight the gate refused: the map was left
+            return done("fled a refused fight")
     return done("time up")
 
 

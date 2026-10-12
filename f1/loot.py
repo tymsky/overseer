@@ -222,13 +222,15 @@ JUNK = {126: 0, 106: 0, 103: 0, 71: 0, 124: 0, 52: 1, 59: 0, 79: 4, 75: 1}
 ITEM_ACTION_USE, ITEM_ACTION_USE_ON = 0x0800, 0x1000  # proto flags_ext: either puts Use in the item's menu
 
 
-def drop_entry(pid: int) -> int:
+def drop_entry(pid: int, loaded: int = 0) -> int:
     """The Drop entry of the item's menu (inven_action_cursor: Look, [Use], Drop, ...): Use is there for drugs and
     for items flagged Use or Use On (a Water Flask, 0xb000, showed Use: its Drop is the second entry, live;
-    at the first it did nothing)."""
+    at the first it did nothing). A gun with rounds in it has Unload before Drop (act_weap, item_w_can_unload):
+    live, a loaded 10mm pistol's "drop" unloaded it."""
     p = knowledge.proto(pid) or {}
     use = p.get("item_type") == "drug" or p.get("flags_ext", 0) & (ITEM_ACTION_USE | ITEM_ACTION_USE_ON)
-    return 2 if use else 1
+    unload = loaded > 0 and weapons.uses_ammo(pid)
+    return 2 if use or unload else 1
 
 
 MOVE_ITEMS_WINDOW = (259, 162)  # the how-many window over the inventory (inventry.c setup_move_timer_win, live)
@@ -382,7 +384,10 @@ def drop(actor, pid: int, qty: int) -> int:
     asks = lambda: move_items_up(actor)
     had = actor._count(pid)
     gone = lambda: actor._count(pid) < had
-    why = actor.item_menu(pid, drop_entry(pid))
+    hands = 0x07000000  # OBJECT_IN_LEFT_HAND | OBJECT_IN_RIGHT_HAND | OBJECT_WORN: not in the list
+    listed = [i for i, p, _ in actor.items() if p == pid and not actor.mem.u32(i + Obj.FLAGS) & hands]
+    loaded = actor.mem.i32(listed[0] + Obj.ITEM_AMMO) if listed and weapons.uses_ammo(pid) else 0
+    why = actor.item_menu(pid, drop_entry(pid, loaded))
     if why is None and (qty > 1 or asks()):
         win32.wait_for(lambda: asks() or gone(), 4, 0.05)
     if why is None and asks():

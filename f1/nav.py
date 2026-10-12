@@ -319,7 +319,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         if actor.in_combat():
             if not fight:
                 return False, "combat"
-            out = actor.fight()
+            out = actor.fight(forced=True)  # a foe began it: weighed before it is fought
             if not out.ok:
                 return False, f"fight: {out.reason}"
             continue

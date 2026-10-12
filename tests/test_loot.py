@@ -83,6 +83,7 @@ def test_drop_entry_follows_the_use_flags():
     water, stimpak, flare, combat_armor, plasma_rifle, ammo = 126, 40, 79, 17, 15, 29
     assert [loot.drop_entry(p) for p in (water, stimpak, flare)] == [2, 2, 2]
     assert [loot.drop_entry(p) for p in (combat_armor, plasma_rifle, ammo)] == [1, 1, 1]
+    assert loot.drop_entry(plasma_rifle, loaded=10) == 2  # Look, Unload, Drop: a loaded gun's Drop is second
 
 
 class WeaponMem:
