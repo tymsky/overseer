@@ -14,11 +14,12 @@ which stops a walk (f1.nav.go_to returns "left the map (dialogue, ...)"). ON_SIG
 reply that opened it, the route that answers it and what to do after; `walk` answers such a talk and walks on. A
 talk ON_SIGHT does not name, or a reply it does not name, is never answered blind: the walk stops with it open.
 
-Static evidence for ON_SIGHT (f1.intdump): Junktown's guards (jtgengrd) open their talk in critter_p_proc on map 12
-(JUNKKILL, Killian's street) when they see the player within 12 hexes with a weapon in either hand (item subtype 3),
-their local 4 at 0, map_var(2) at 0, HIRED_BY_KILLIAN and CAPTURE_GIZMO at 0; the talk's first node (110) asks for
-the weapon put away, and a timed event 1 game second later floats a warning if it is still in hand and 0.5 s after
-that sets the guard to attack.
+Static evidence for ON_SIGHT (f1.intdump): Junktown's gate guards (assblow, on its entrance map) open their talk in
+critter_p_proc when they see the player with a weapon in either hand (item subtype 3), their local 4 at 0,
+HIRED_BY_KILLIAN and CAPTURE_GIZMO at 0, once until their check resets; the talk's first node (135:110) asks for the
+weapon put away, and a timed event 5 ticks after the talk opened marks the guard to attack if a weapon is still in
+hand (it resets the check when none is). Killian's street's guards (jtgengrd) do the same on map 12 (JUNKKILL) within
+12 hexes (37:110). The routes 111 -> 116 -> 119 end both talks at their end node.
 
 The first screen of a talk can be predicted too, before it opens: `entry` is the procedure the talk starts in (the
 script's talk procedure, or the one it calls), its conditions read before the click.
@@ -172,10 +173,13 @@ class OnSight:
     then: str = ""
 
 
-# Junktown's gate guards (jtgengrd): Node00 (37:110, a weapon in hand) -> 111 -> Node01 (115) -> 116 -> Node02 (118)
-# -> 119 -> JTGenGrdEnd: the talk ends; the weapon put away before the guard's timed check
-# [static: jtgengrd critter_p_proc, talk_p_proc, JTGenGrd00, 01, 02, timed_event_p_proc]
+# Junktown's gate guards (assblow): guard00 (135:110, a weapon in hand) -> 111 -> guard01 (115) -> 116 -> guard02
+# (118) -> 119 -> guardend: the talk ends; the weapon put away before the guard's timed check
+# [static: assblow critter_p_proc, pre_dialogue, do_dialogue, guard00..02, timed_event_p_proc]
+# Killian's street's guards (jtgengrd): Node00 (37:110) -> 111 -> Node01 (115) -> 116 -> Node02 (118) -> 119 ->
+# JTGenGrdEnd [static: jtgengrd critter_p_proc, talk_p_proc, JTGenGrd00, 01, 02, timed_event_p_proc]
 ON_SIGHT: dict[str, OnSight] = {
+    "assblow": OnSight({(135, 110): (111, 116, 119)}, then="holster"),
     "jtgengrd": OnSight({(37, 110): (111, 116, 119)}, then="holster"),
 }
 ON_SIGHT_TALKS = 3  # such talks answered on one walk at most
@@ -202,16 +206,17 @@ def answer_on_sight(actor, log=None) -> dict:
 
 
 def walk(actor, goals: set[int], max_steps: int = 80, fight=True, log=None) -> tuple[bool, str, list[dict]]:
-    """nav.go_to, with the talks that open on the way answered by ON_SIGHT and the walk then taken up again
-    (ON_SIGHT_TALKS at most). Returns go_to's (reached, why) and the talks answered."""
+    """nav.go_to, with the talks that open on the way (or are open when it starts) answered by ON_SIGHT and the walk
+    then taken up again (ON_SIGHT_TALKS at most). Returns go_to's (reached, why) and the talks answered."""
     talks: list[dict] = []
     while True:
+        if actor.snap().screen == "dialogue":  # opened on the way, or before the walk began (a weapon drawn in sight)
+            if len(talks) == ON_SIGHT_TALKS:
+                return False, "too many talks on the way", talks
+            talks.append(answer_on_sight(actor, log))
+            if not talks[-1]["ok"]:
+                return False, talks[-1].get("why") or "a talk on the way stayed open", talks
+            time.sleep(0.3)
         ok, why = nav.go_to(actor, goals, max_steps=max_steps, fight=fight)
         if actor.snap().screen != "dialogue":
             return ok, why, talks
-        if len(talks) == ON_SIGHT_TALKS:
-            return False, "too many talks on the way", talks
-        talks.append(answer_on_sight(actor, log))
-        if not talks[-1]["ok"]:
-            return False, talks[-1].get("why") or "a talk on the way stayed open", talks
-        time.sleep(0.3)

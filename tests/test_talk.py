@@ -146,24 +146,34 @@ def test_a_walk_answers_a_talk_on_sight_and_walks_on(monkeypatch) -> None:
     walks = iter([(True, "left the map (dialogue, JUNKENT.MAP)"), (True, "arrived")])
     monkeypatch.setattr(nav, "go_to", lambda *a, **k: next(walks))
     monkeypatch.setattr(talk, "answer_on_sight", lambda actor, log=None: {"ok": True, "script": "jtgengrd"})
-    ok, why, talks = talk.walk(_Actor(["dialogue", "map"]), {1})
+    ok, why, talks = talk.walk(_Actor(["map", "dialogue", "dialogue", "map"]), {1})
     assert (ok, why, [t["script"] for t in talks]) == (True, "arrived", ["jtgengrd"])
 
 
 def test_a_talk_on_sight_not_named_stops_the_walk(monkeypatch) -> None:
     monkeypatch.setattr(nav, "go_to", lambda *a, **k: (True, "left the map (dialogue, X)"))
     monkeypatch.setattr(talk, "answer_on_sight", lambda actor, log=None: {"ok": False, "why": "a talk on the way: x"})
-    ok, why, talks = talk.walk(_Actor(["dialogue"]), {1})
+    ok, why, talks = talk.walk(_Actor(["map", "dialogue"]), {1})
     assert (ok, why, len(talks)) == (False, "a talk on the way: x", 1)
+
+
+def test_a_walk_answers_a_talk_open_before_it_starts(monkeypatch) -> None:
+    monkeypatch.setattr(nav, "go_to", lambda *a, **k: (True, "arrived"))
+    monkeypatch.setattr(talk, "answer_on_sight", lambda actor, log=None: {"ok": True, "script": "assblow"})
+    ok, why, talks = talk.walk(_Actor(["dialogue", "map"]), {1})
+    assert (ok, why, [t["script"] for t in talks]) == (True, "arrived", ["assblow"])
 
 
 @needs_game
 @needs_knowledge
-def test_the_junktown_guards_talk_on_sight_by_the_script() -> None:
-    nodes = talktree.tree("jtgengrd")
-    route = talk.ON_SIGHT["jtgengrd"].routes[(37, 110)]
-    at = talktree.locate(nodes, 37, 110)
-    assert [p[1] for p in at] == ["JTGenGrd00"]
+@pytest.mark.parametrize(
+    "script,reply,first", [("jtgengrd", (37, 110), "JTGenGrd00"), ("assblow", (135, 110), "guard00")]
+)
+def test_the_junktown_guards_talk_on_sight_by_the_script(script: str, reply: tuple[int, int], first: str) -> None:
+    nodes = talktree.tree(script)
+    route = talk.ON_SIGHT[script].routes[reply]
+    at = talktree.locate(nodes, *reply)
+    assert [p[1] for p in at] == [first]
     for message in route:  # each option leads to the next reply, the last one ends the talk
         option = next(o for o in talktree.options_after(nodes, at[0]) if o.message == message)
         at = sorted(talktree.first(nodes, option.target), key=str)
