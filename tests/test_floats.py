@@ -73,8 +73,8 @@ def font101() -> floats.Font:
     "lines",
     [
         ["Zzzz"],
-        ["We're closed. Come back around four", "o'clock."],
-        ["Hey! Don't think you're going to get away", "with that, thief!"],
+        ["Quiet lamps hum over the yard, past", "o'clock."],
+        ["Hey! Six brown foxes jump over the lazy", "wall, quickly!"],
     ],
 )
 def test_the_games_float_font_reads_back(font101: floats.Font, lines: list[str]) -> None:

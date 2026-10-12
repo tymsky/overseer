@@ -1,7 +1,7 @@
-"""The routes' hand-typed data read back against the game's own files: every dialogue plan phrase
-must be a line some character can say, and in the .MSG file its comment names when it names one. A phrase typed
-wrong, or copied from a walkthrough instead of the game, is otherwise found only live, when the talk takes the wrong
-turn. (Tile constants are not checked: many are hexes to stand on, a cab or a room, not objects.)"""
+"""The routes' hand-typed data read back against the game's own files: every dialogue plan item names messages
+(f1.dialogue.plan_index: "#N", "SCRIPT#N", "@N") that exist, in the .MSG file its comment names when it names one.
+A number typed wrong is otherwise found only live, when the talk takes the wrong turn. (Tile constants are not
+checked: many are hexes to stand on, a cab or a room, not objects.)"""
 
 import ast
 import re
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from f1 import paths
+from f1 import dialogue, paths
 from f1.dat import GameFiles
 from f1.knowledge import parse_msg
 
@@ -26,8 +26,8 @@ ROUTE_MODULES = (
 
 
 def plan_lists(path: Path) -> list[tuple[int, str, list[str], list[str]]]:
-    """(line, name, phrases, .MSG files named on its lines) of every module-level UPPER_CASE list or tuple of
-    lower-case strings: the dialogue plans (dialogue.pick matches them against the options, case aside)."""
+    """(line, name, items, .MSG files named on its lines) of every module-level UPPER_CASE list or tuple of
+    lower-case strings: the dialogue plans."""
     src = path.read_text(encoding="utf-8")
     lines = src.split("\n")
     out = []
@@ -55,21 +55,21 @@ def test_the_plan_finder_sees_the_plans() -> None:
 
 
 @pytest.mark.skipif(not (INSTANCE / "MASTER.DAT").exists(), reason="instance not built")
-def test_every_plan_phrase_is_a_line_of_the_game() -> None:
+def test_every_plan_item_is_a_message_of_the_game() -> None:
     files = GameFiles(INSTANCE)
-    said: dict[str, str] = {}
+    said: dict[str, dict[int, str]] = {}
     for name in files.names("TEXT/ENGLISH/DIALOG/"):
-        msgs = parse_msg(files.read(name.replace("\\", "/")))
-        said[Path(name.replace("\\", "/")).stem.upper()] = "\n".join(
-            re.sub(r"\s+", " ", t.lower()) for t in msgs.values()
-        )
-    everything = "\n".join(said.values())
+        said[Path(name.replace("\\", "/")).stem.upper()] = parse_msg(files.read(name.replace("\\", "/")))
     wrong = []
     for path in ROUTE_MODULES:
-        for line, name, phrases, named in plan_lists(ROOT / path):
-            for phrase in phrases:
-                if phrase not in everything:
-                    wrong.append(f"{path}:{line} {name}: {phrase!r} is in no dialogue file")
-                elif named and not any(phrase in said.get(f, "") for f in named):
-                    wrong.append(f"{path}:{line} {name}: {phrase!r} is not in {', '.join(named)}")
+        for line, name, items, named in plan_lists(ROOT / path):
+            for item in items:
+                m = dialogue.PLAN_ID.fullmatch(item)
+                if m is None:
+                    wrong.append(f"{path}:{line} {name}: {item!r} is not a message number")
+                    continue
+                where = [m.group(1).upper()] if m.group(1) else named or list(said)
+                for n in (int(k) for k in m.group(3).split("/")):
+                    if not any(n in said.get(f, {}) for f in where):
+                        wrong.append(f"{path}:{line} {name}: {item!r}: no message {n} in {', '.join(where[:3])}")
     assert wrong == []

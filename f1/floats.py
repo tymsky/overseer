@@ -1,4 +1,4 @@
-"""Floating text over critters ("Zzzz", "We're closed. Come back around four o'clock."), read back from memory.
+"""Floating text over critters (a sleeper's snore, a shop's closing hours), read back from memory.
 
 A script's float_msg draws its string into a text object (fallout1-ce textobj.cc text_object_create, 0x49CFB4): the
 list text_object_list (0x665210, 20 slots) and its count text_object_index (0x508324). The string itself is not
@@ -200,7 +200,7 @@ def read_words(pixels: bytes, width: int, height: int, lines: int) -> str:
 
 def keys(mem, owner: int) -> set[tuple[int, int, int]]:
     """The keys (owner, tile, time) of the floats over `owner` now, without reading their words: a new key after a
-    click is the critter's answer (the cook's "I'm too busy to talk right now.", COOK.INT, instead of a talk)."""
+    click is the critter's answer (the cook's busy line, COOK.INT, instead of a talk)."""
     n = min(max(mem.i32(TEXT_OBJECT_INDEX), 0), MAX_OBJECTS)
     out = set()
     for i in range(n):

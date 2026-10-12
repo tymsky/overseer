@@ -189,7 +189,7 @@ AGENT_PERKS = ("Bonus Rate of Fire", "Bonus Ranged Damage", "Earlier Sequence", 
 # Weapons waits a level; no energy weapon comes before the Boneyard anyway.
 IDEALIST_SKILLS = (
     ("small guns", 55), ("outdoorsman", 100), ("speech", 110), ("lockpick", 45), ("energy weapons", 90),
-    ("speech", 120),  # "But I am a ghoul!" (-20) sure at 121, from the next level-up (Harry on the way out)
+    ("speech", 120),  # Harry's ghoul line, HARRY.MSG 103 (-20), sure at 121, from the next level-up (Harry on the way out)
     ("science", 75), ("repair", 75), ("energy weapons", 130), ("science", 110), ("repair", 105),
     ("lockpick", 90), ("traps", 60), ("first aid", 70),
 )  # fmt: skip

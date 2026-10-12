@@ -44,25 +44,25 @@ from f1.routes import (
 
 PID_POWER_ARMOR, PID_RADIO = 3, 100
 KATJA_JOIN = [
-    "i'm a traveler.",
-    "first you tell me who you are.",
-    "i'm looking for information. can you help?",
-    "i need to know about the area around this city.",
-    "i don't plan to stay in this place too much longer, myself.",
-    "you're a welcome addition, but the desert's not much more fun.",
+    "#105",
+    "#109",
+    "#116",
+    "#130",
+    "#145",
+    "#149",
 ]  # KATJA.MSG 105, 109, 116, 130, 145, 149: Katja20, KATJA_STATUS 2, +200 XP
-KATJA_LOCK = ["can you give this lock a try?"]  # KATJA.MSG 164 (Katja24 on MBENT): she unlocks MBOUT2IN, no roll
-KATJA_LEAVE = ["thanks for your help. you can go now."]  # KATJA.MSG 167: KatjaLeave, KATJA_STATUS 3
-RADIO_TRICK = ["help! unknown attackers!"]  # RADIO.MSG 105 (RadioEnt -> Radio07): MBENT map_var 0, +1500 XP
-LOG_GREY = ["search logs.", "grey", "yes."]  # VCONCOMP.MSG 104, 129, 134: MASTER_FILLER_7 (archive 411)
-LOG_MAXSON = ["search logs.", "maxson", "yes."]  # VCONCOMP.MSG 104, 131, 134: MASTER_FILLER_8 (archive 412)
-VATS_CODE = ["display security codes.", "31914-1041-1251514"]  # VCONCOMP.MSG 103, 110: VATS_BLOWN, karma +5
+KATJA_LOCK = ["#164"]  # KATJA.MSG 164 (Katja24 on MBENT): she unlocks MBOUT2IN, no roll
+KATJA_LEAVE = ["#167"]  # KATJA.MSG 167: KatjaLeave, KATJA_STATUS 3
+RADIO_TRICK = ["#105"]  # RADIO.MSG 105 (RadioEnt -> Radio07): MBENT map_var 0, +1500 XP
+LOG_GREY = ["#104", "#129", "#134/172"]  # VCONCOMP.MSG 104, 129, 134: MASTER_FILLER_7 (archive 411)
+LOG_MAXSON = ["#104", "#131", "#134/172"]  # VCONCOMP.MSG 104, 131, 134: MASTER_FILLER_8 (archive 412)
+VATS_CODE = ["#103", "#110/124"]  # VCONCOMP.MSG 103, 110: VATS_BLOWN, karma +5
 MAXSON_REPORT = [
-    "i saw their base. it's crawling with mutants.",
-    "i saw the mutant base to the north.",
-    "you can't play defense on this one maxson.",
-    "i'm not quite sure what we should do about it right now.",
-    "thank you.",
+    "#338",
+    "#339",
+    "#340",
+    "#342",
+    "#350",
 ]  # MAXSON.MSG 338/339, 340, 342, 350: Maxson23, +1500 XP at the talk's end; never 341 (the Elders)
 BASE_SECONDS = 300  # MBENT/MBSTRONG/MBVATS map_update: the player dies at 300 s after the code
 FOLLOWERS_SECTION = worldmap.section("boneyard", "LAFOLLWR")
@@ -113,7 +113,7 @@ def robed(actor: Actor) -> bool:
 
 
 def radio_trick(actor: Actor) -> bool:
-    """The Radio used on MBENT: 'Help! Unknown attackers!...' sends three of the four guards away, +1500 XP."""
+    """The Radio used on MBENT: RADIO.MSG 105 sends three of the four guards away, +1500 XP."""
     if quests.mvar(actor, 0) or not actor._count(PID_RADIO):
         return True
     xp0 = experience(actor)
@@ -182,7 +182,7 @@ def look_at_the_door(actor: Actor) -> bool:
 
 def katja_leaves(actor: Actor) -> bool:
     """Sent away a few hexes from the door: after the lock she stands on its only front hex (21272), and dismissed
-    there she stays, and the door answers "You cannot get there." (live). The player walks off first and
+    there she stays, and the door answers that it cannot be reached (live). The player walks off first and
     she follows."""
     if quests.gvar(actor, "KATJA_STATUS") != 2:
         return True
@@ -229,7 +229,7 @@ def the_computer_talk(actor: Actor, plan: list[str], done: Callable[[], bool], s
         VCONCOMP, talking, 60, aims=quests.SCENERY_AIMS, targets=frozenset({comp.address})
     ):
         return False
-    win32.wait_for(lambda: actor.mem.glob("gdNumOptions") > 0, 5, 0.1)  # "Command?" before its options (live)
+    win32.wait_for(lambda: actor.mem.glob("gdNumOptions") > 0, 5, 0.1)  # its prompt before its options (live)
     dialogue.converse_strict(actor.mem, plan, max_steps=steps, log=actor.log)
     time.sleep(0.5)
     return done()

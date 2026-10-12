@@ -126,7 +126,7 @@ def build(game_dir: Path = INSTANCE) -> dict:
                 }
             protos[f"0x{pid & 0xFFFFFFFF:08X}"] = entry
     gvars = parse_gvars(files.read("DATA/VAULT13.GAM"))
-    # SCRIPTS.LST: line i is script index i ("Killian.int ; Killian, law enforcement in Junktown"): the name only
+    # SCRIPTS.LST: line i is script index i (a file name, a semicolon, a description): the name only
     scripts = [
         line.split(".")[0].strip().lower() for line in files.read("SCRIPTS/SCRIPTS.LST").decode("latin1").splitlines()
     ]

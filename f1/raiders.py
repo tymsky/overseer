@@ -117,7 +117,7 @@ def the_outer_camp(actor: Actor) -> bool:
 
 
 def rescues(actor: Actor, n0: int) -> int:
-    """The women's lines since `n0`, joined first: the game wraps "...for the rescue of a / slave." over two lines
+    """The women's lines since `n0`, joined first: the game wraps a long line over two lines
     (live: both paid and the step, matching line by line, saw none)."""
     count = lambda lines: " ".join(" ".join(lines).split()).count("rescue of a slave")
     # disp_start counts modulo the 100-line box: a long fight wraps it past n0 and the window shrinks to a few

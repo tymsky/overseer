@@ -14,23 +14,23 @@ after one daytime talk (his reaction is computed only then), and Set pays at nig
 import time
 from collections.abc import Callable
 
-from f1 import geometry, nav, quests, scripts, session, state, watchdog, win32, world
+from f1 import dialogue, geometry, nav, quests, scripts, session, state, watchdog, win32, world
 from f1.actions import Actor
 from f1.idealist import day, experience, hands_empty, karma, rest_until
 from f1.routes import Step, heal_up, in_town, on_map, pick_lock, settle, travel
 
 INVASION_DAY = 110  # GVAR NECROPOLIS_INVADED_DATE: HOTELMAP/HALLDED1/WATRSHED map_enter
 SET_JOB = [
-    "oh, killer it is",
-    "got it.",
-    "what can i do for you?",
-    "done.",
-    "got it.",
+    "#102",
+    "#108/125/153/228/240",
+    "#111/150",
+    "#144",
+    "#108/125/153/228/240",
 ]  # SET.MSG 102, 108, 111, 144, 125
-SET_BOUNTY = ["i'm here to see the boss. that you?", "i'm here to collect the bounty for some mutants."]  # 199, 215
-SET_REWARD = ["ok. thanks."]  # SET.MSG 166 after set18: SIGNAL_REWARD |= 1; never 167
-GARRET_DAY = ["oh, ok."]  # GARRET.MSG 102, by day, once: his reaction (level 3 at CH 3, karma 45+)
-PRISONER_THANKS = ["no prob."]  # PRISONR.MSG 116: +500 XP; karma +1 when he leaves
+SET_BOUNTY = ["#199", "#215"]  # 199, 215
+SET_REWARD = ["#166"]  # SET.MSG 166 after set18: SIGNAL_REWARD |= 1; never 167
+GARRET_DAY = ["#102"]  # GARRET.MSG 102, by day, once: his reaction (level 3 at CH 3, karma 45+)
+PRISONER_THANKS = ["#116"]  # PRISONR.MSG 116: +500 XP; karma +1 when he leaves
 CELL_DOOR = 18262  # WATRSHD e1, GDOOR (DOOR.INT's messages): the prisoner behind it
 WAIT_SPEED = 50  # the clock for a wait the game will not rest through (f1.clock: the engine holds to 50x)
 GARRET_FRIDGE = 19913  # HALLDED e1, NGARFRDG: never touched by the player (Looting_Fridge)
@@ -105,7 +105,7 @@ def garret_by_day(actor: Actor) -> bool:
     hands_empty(actor)
     steps = quests.talk(actor, "garret", GARRET_DAY, strict=True) or []
     settle(actor, GARRET_DAY)
-    replied = any("shouldn't be here during the day" in (reply or "").lower() for reply, _o, _c in steps)
+    replied = any(dialogue.holds(reply or "", "garret", 101) for reply, _o, _c in steps)  # not by day
     actor.log.emit("garret_day", replied=replied, steps=len(steps))
     if steps:
         _garret_talked.add(actor.pid)

@@ -12,6 +12,7 @@ message at 0x58DACC and 0x58DAD0 and clears gdNumOptions (0x505198); gdAddOption
 talk's script is read from memory too. A gsay_message line shows one option of list -2 (its [Done]).
 """
 
+import re
 import struct
 import time
 from dataclasses import dataclass
@@ -131,8 +132,8 @@ EXITS = ("bye", "leaving", "i'll be going", "goodbye", "farewell", "that's all")
 
 
 def match(options: list[str], phrase: str) -> int | None:
-    """The option that is `phrase` (case aside), else the first that contains it: "thanks." picks "Thanks." over
-    "Thanks. Can I ask you a few more questions, first?"."""
+    """The option that is `phrase` (case aside), else the first that contains it: "ab." picks "Ab." over
+    "Ab. Cd ef?"."""
     lowered = [o.lower().strip() for o in options]
     exact = next((i for i, o in enumerate(lowered) if o == phrase), None)
     return exact if exact is not None else next((i for i, o in enumerate(lowered) if phrase in o), None)
@@ -156,12 +157,60 @@ def option_texts(d: Dialogue) -> list[str]:
     return out
 
 
+PLAN_ID = re.compile(r"([a-z0-9_]*)([#@])(\d+(?:/\d+)*)")
+
+
+def is_id(item: str) -> bool:
+    """A plan item that names messages by number (plan_index), not by a phrase."""
+    return PLAN_ID.fullmatch(item) is not None
+
+
+def list_name(list_id: int) -> str:
+    names = knowledge.load()["scripts"]
+    return names[list_id - 1] if 1 <= list_id <= len(names) else ""
+
+
+def message_text(script: str, number: int) -> str:
+    """Message NUMBER of SCRIPT's message file (TEXT/ENGLISH/DIALOG/SCRIPT.MSG), lowered with its whitespace
+    folded; "" when there is none."""
+    from f1 import intdump
+
+    names = knowledge.load()["scripts"]
+    return _plain(intdump.messages(names.index(script) + 1).get(number, "")) if script in names else ""
+
+
+def holds(text: str, script: str, number: int) -> bool:
+    """TEXT (a reply, an option, the message box's lines) holds message NUMBER of SCRIPT's message file."""
+    wanted = message_text(script, number)
+    return bool(wanted) and wanted in _plain(text)
+
+
 def plan_index(d: Dialogue, phrase: str) -> int | None:
-    """The option a plan item names: "#N" its message number, else a phrase matched as `match` does against the
-    options' message texts (option_texts)."""
-    if phrase.startswith("#") and phrase[1:].isdigit():
-        return d.index_of(int(phrase[1:]))
-    return match(option_texts(d), _plain(phrase))
+    """The option a plan item names. By message number:
+    "#N"           the option that is message N (of its own list); "#N/M/..." the first of these on screen;
+    "SCRIPT#N"     the same, only in the list of the script SCRIPT's message file (talks that change lists:
+                   one script's options under another's, a talk that hands over to the next speaker);
+    "@N"           an option whose text holds message N of the talk's script (options built from a message and
+                   the player's name: text options, list -4); "SCRIPT@N" in SCRIPT's message file.
+    Else a phrase matched as `match` does against the options' message texts (option_texts)."""
+    m = PLAN_ID.fullmatch(phrase)
+    if m is None:
+        return match(option_texts(d), _plain(phrase))
+    script, kind, numbers = m.group(1), m.group(2), [int(n) for n in m.group(3).split("/")]
+    if kind == "#":
+        for n in numbers:
+            i = next((o.index for o in d.entries
+                      if o.message == n and (not script or list_name(o.list_id) == script)), None)  # fmt: skip
+            if i is not None:
+                return i
+        return None
+
+    for n in numbers:
+        text = message_text(script or d.script, n)
+        i = match(option_texts(d), text) if text else None
+        if i is not None:
+            return i
+    return None
 
 
 def ids(d: Dialogue) -> dict:
@@ -236,7 +285,7 @@ def converse(mem: GameMemory, plan: list[str], max_steps: int = 15, log=None) ->
         seen.add(node)
         i = exit_option if exit_option is not None else pick_by_plan(d, left or plan)
         chosen = option_texts(d)[i]
-        left = [p for p in left if _plain(p) not in chosen and not (p.startswith("#") and plan_index(d, p) == i)]
+        left = [p for p in left if (plan_index(d, p) != i if is_id(p) else _plain(p) not in chosen)]
         steps.append((d.reply, d.options, d.options[i]))
         if log:
             log.emit("dialogue", speaker=d.speaker, reply=d.reply, options=d.options, chosen=d.options[i], **ids(d),

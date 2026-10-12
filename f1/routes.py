@@ -58,26 +58,26 @@ GVAR_FIND_WATER_CHIP = 101
 CELL_MANHOLE = 18658  # the Watershed cell whose manhole leads to the isolated sewer part above Vault 12
 WORKING_COMPUTER = 25270  # Vault 12, third floor: the only computer with the use flag
 V12_DOORS = {0: 13504, 2: 17108}  # Vault 12's elevator doors by elevation (the cab floor is the door tile - 200)
-HARRY_PEACE = ["but i am a ghoul", "obvious", "i'll be leaving now", "just passing through", "have a good day"]
-OVERSEER_CHIP = ["yes.", "it was nothing", "you're welcome", "ok.", "fair enough"]
+HARRY_PEACE = ["#103", "#114", "#118", "#150", "#137"]
+OVERSEER_CHIP = ["#151", "#157", "#158", "#160/162/188/237/118", "#164"]
 GVAR_NUM_RADSCORPIONS, GVAR_RADSCORPION_SEED = 2, 43
 SETH_POST = 14108  # Shady Sands' gate (SHADYW), where Seth stands; his proto is a plain "Peasant"
-# ARADESH.MSG: the first talk ends after the greeting (104, 115: "I shall believe you...for now"); the next one
+# ARADESH.MSG: the first talk ends after the greeting (104, 115); the next one
 # asks (153 or 160), then 166 -> Ara_28 -> 197 -> Ara_28a -> 199 (the quest)
 ARADESH_SCORPIONS = [
-    "mean you no harm",
-    "missed my tiny village",
-    "it was pretty tough",
-    "what's going on around here",
-    "go on.",
-    "i'll help you get rid of these things",
-    "can i ask you some questions",
-    "ask you a few questions",
+    "#104/124/146",
+    "#115",
+    "#117",
+    "#150/166/194/216",
+    "#197",
+    "#199",
+    "#153",
+    "#160",
 ]
-SETH_CAVES = ["take me to the radscorpion caves", "okay, take me to the radscorpions", "yes."]  # SETH.MSG 118, 323, 126
-ARADESH_NEST = ["i destroyed the nest"]  # ARADESH.MSG 209 -> Ara_32 "You are truly a hero!"
-# OVER.MSG: Over_12 "do you have the chip?" only sighs (122); Over_19a leads to Over_22 -> 139 -> the supplies
-OVERSEER_SUPPLIES = ["sorry, haven't been able to track it down", "i could use some more stuff", "not yet. sorry"]
+SETH_CAVES = ["#118", "#323", "#126"]  # SETH.MSG 118, 323, 126
+ARADESH_NEST = ["#209"]  # ARADESH.MSG 209 -> Ara_32, his thanks (210)
+# OVER.MSG: Over_12, asking about the chip, only sighs (122); Over_19a leads to Over_22 -> 139 -> the supplies
+OVERSEER_SUPPLIES = ["#132", "#139", "#122"]
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,7 @@ def past_harry(actor: Actor) -> bool:
     return geometry.distance(actor.snap().dude.tile, CELL_MANHOLE) <= 1 and not actor.in_combat()
 
 
-TREAD_REACH = 7  # TREAD.INT: a Glowing One attacks one it sees within 6 hexes ("You tread without permission.")
+TREAD_REACH = 7  # TREAD.INT: a Glowing One attacks one it sees within 6 hexes (its warning float)
 
 
 def away_from_treaders(actor: Actor) -> frozenset[int]:
@@ -168,7 +168,7 @@ def away_from_treaders(actor: Actor) -> frozenset[int]:
 
 def rested_above(actor: Actor) -> bool:
     """Vault 12's ground floor below 75 % HP: the stimpaks there are, if any. No rest is possible in Necropolis'
-    underground: the Pip-Boy says "You can not rest at this location!" (PIPBOY.MSG 215) in Vault 12, in the sewer
+    underground: the Pip-Boy refuses (PIPBOY.MSG 215) in Vault 12, in the sewer
     above it and in the Watershed's cell level (all three measured live in a full run). So the healing has
     to come before the sewers (the runner's checkpoints: a pistol in hand, not a knife, costs fewer HP there), and a
     wounded Agent fights the guarding Glowing One as it is (the Mad Glowing One its fight draws in: 60 HP)."""
@@ -240,7 +240,10 @@ def nest_reported(actor: Actor) -> bool:
     if quests.gvar(actor, "RESCUE_TANDI"):
         return True
     steps = quests.talk(actor, "Aradesh", ARADESH_NEST) or []
-    return any("truly a hero" in reply for reply, _options, _chosen in steps) or quests.gvar(actor, "RESCUE_TANDI") != 0
+    return (
+        any(dialogue.holds(reply, "aradesh", 210) for reply, _options, _chosen in steps)
+        or quests.gvar(actor, "RESCUE_TANDI") != 0
+    )
 
 
 def supplies(actor: Actor) -> bool:
@@ -270,32 +273,32 @@ START = [
 
 PID_LEATHER_ARMOR, PID_BUG, PID_TAPE_RECORDER, PID_CAPS = 0x01, 0x39, 0x68, 0x29
 DAY = 864000  # game_time ticks (0.1 s) a day
-JUNKTOWN_GATE = ["i'm sorry to disturb you, sir"]  # ASSBLOW.MSG 159: the night guard lets the polite one in
-# A guard who sees a drawn gun: "You'd better put that away..." (the gun goes away right after)
-TOWN_GREETINGS = JUNKTOWN_GATE + ["okay, bye", "i'd like to enter."]  # REGULATR.MSG 104: Adytum's gate
-KILLIAN_JOB = ["help you get rid of gizmo", "i'm in", "fair enough, i'll do it", "yeah. i'll do it"]  # KILLIAN.MSG
+JUNKTOWN_GATE = ["assblow#159"]  # ASSBLOW.MSG 159: the night guard lets the polite one in
+# A guard who sees a drawn gun warns (the gun goes away right after)
+TOWN_GREETINGS = JUNKTOWN_GATE + ["regulatr#104"]  # REGULATR.MSG 104: Adytum's gate
+KILLIAN_JOB = ["#106", "#201", "#211", "#215"]  # KILLIAN.MSG
 GIZMO_CONFESSION = [  # GIZMO.MSG, with the tape recorder in hand
-    "attempt on killian's life",
-    "of course you do",
-    "i'm here to help you",
-    "you need someone who can do the job",
-    "for a price",
-    "you need someone from out of town",
-    "why you want him dead",
-    "sure. it's a job",
+    "#169",
+    "#171",
+    "#177",
+    "#181",
+    "#184",
+    "#187",
+    "#192",
+    "#195",
 ]
 KILLIAN_EVIDENCE = [
-    "i sure did",
-    "the confession",
-    "suit of leather armor",
-    "kinda depends on what you're willing",
-    "done.",
+    "#221",
+    "#225",
+    "#277",
+    "#232",
+    "#236",
 ]
-LARS_RAID = ["killian sent me to help run gizmo", "killian sent me", "let's nail that tub"]  # LARS.MSG 160, 156
+LARS_RAID = ["#160", "#160/161", "#156"]  # LARS.MSG 160, 156
 GIZMO_GANG = ("Gizmo", "Izo", "Thug")
-ARADESH_TANDI = ["have you tried to save her", "who could have taken her", "i'll check it out"]  # ARADESH.MSG 229-236
-GARL_FREE = ["i want you to set the girl free", "i represent a threat you don't even understand"]  # GARL.MSG 131, 141
-ARADESH_REWARD = ["thanks."]  # ARADESH.MSG 242 "Here is your reward."
+ARADESH_TANDI = ["#229", "#232/239", "#236"]  # ARADESH.MSG 229-236
+GARL_FREE = ["#131", "#141"]  # GARL.MSG 131, 141
+ARADESH_REWARD = ["#244/151/167/181/182/184/187/195/211/212/217/240/243"]  # after ARADESH.MSG 242, the reward
 
 
 def hour(actor: Actor) -> float:
@@ -326,7 +329,7 @@ def kenji(actor: Actor) -> bool:
     morning the talk failed (Killian asleep), Kenji never came, and "no Kenji here" passed the step (a full run at
     Full HD): without the fight Killian never thanks the Agent and offers the job (KILLIAN.INT Killian47)."""
     by_day(actor)
-    quests.talk(actor, "Killian Darkwater", ["i'd better go"])
+    quests.talk(actor, "Killian Darkwater", ["#107/121"])
     actor.holster(False)
     fought = win32.wait_for(actor.in_combat, 45, 0.25)
     if fought:
@@ -429,7 +432,7 @@ def tandi_reward(actor: Actor) -> bool:
     caps = actor._count(PID_CAPS)
     actor.holster(True)
     steps = quests.talk(actor, "Aradesh", ARADESH_REWARD) or []
-    paid = any("here is your reward" in reply.lower() for reply, _options, _chosen in steps)
+    paid = any(dialogue.holds(reply, "aradesh", 242) for reply, _options, _chosen in steps)
     return actor._count(PID_CAPS) >= caps + 500 or paid
 
 
@@ -461,7 +464,7 @@ def stimpaks_from_killian(actor: Actor, quantity: int = 3) -> bool:
     from f1 import barter
 
     have = actor._count(PID_STIMPAK)
-    out = barter.buy(actor, "Killian Darkwater", ["i want to buy something"], PID_STIMPAK, quantity)
+    out = barter.buy(actor, "Killian Darkwater", ["#104/118"], PID_STIMPAK, quantity)
     actor.log.emit("shopping", **out)
     return actor._count(PID_STIMPAK) > have
 
@@ -529,19 +532,18 @@ HUB_SUPPLIES = [
 
 # JTRAIDER.MSG: the crazed raider holding Sinthia in the Crash House; the talking way out (Speech lines), no fight
 HOSTAGE_TALK = [
-    "there is no need for violence",
-    "we can talk this over",
-    "you do. by holding this woman hostage",
-    "i trust you",
-    "you have to hear me out",
-    "just relax. i won't harm you",
-    "where do we go from here",
-    "no money, but you can just walk away",
-    "i won't shoot you",
+    "#105",
+    "#111",
+    "#114",
+    "#132",
+    "#140",
+    "#141",
+    "#150",
+    "#159",
 ]
 
 
-MARCELLE_HELP = ["hmm. i'll check it out", "all right, don't harp on me. i'll look into it"]  # MARCELLE.MSG 104, 109
+MARCELLE_HELP = ["#104", "#109"]  # MARCELLE.MSG 104, 109
 
 
 def sinthia(actor: Actor) -> bool:
@@ -569,7 +571,7 @@ PID_ROPE, PID_BROTHERHOOD_TAPE, PID_VREES_DISK = 0x7F, 0xA4, 0xC2
 # shelves hold one behind his locked storeroom door (25690 stayed shut); one lying at SHADYE 27694 was not reached.
 SHADY_BOOKCASE = 13097
 # CABBOT.MSG 105, 116, 125 (cabbot09 sets BECOME_AN_INITIATE 1); 145 when he was met before
-CABBOT_JOIN = ["i'd like to join.", "i've changed my mind. i want to join the brotherhood.", "like what?", "okay."]
+CABBOT_JOIN = ["#105/111", "#145/154", "#116", "#125/151/161"]
 
 
 def the_glow_quest(actor: Actor) -> bool:
@@ -584,12 +586,12 @@ def the_glow_quest(actor: Actor) -> bool:
 # leads back up (glv12ent). No live foes on the first level; radiation everywhere, hot spots and floor traps.
 GLOW_BEAM = 21316  # GLOWENT e0
 # The beam is drawn east of its hex, over the pit; the player standing beside it covers the hex itself (live:
-# a click on the hex used the rope on the player, "That does nothing."; (40, -6) tied it and went down).
+# a click on the hex used the rope on the player (no effect); (40, -6) tied it and went down).
 GLOW_BEAM_AIMS = ((40, -6), (60, -8), (25, -4), (80, -10), (50, 0))
-GLOW_BODY = 14304  # GLOW1 e0: "Person In Power Armor", dead: the Brotherhood Tape and the Yellow Pass Key
+GLOW_BODY = 14304  # GLOW1 e0: a dead Brotherhood paladin: the Brotherhood Tape and the Yellow Pass Key
 GLOW1_HOT_SPOTS = ((20909, 2), (20316, 2), (16108, 3), (16719, 2))  # HOTSPOT: 20-50 rads on each entry
 GLOW1_FLOOR_TRAPS = ((23522, 6),)  # TRAPFLOR: a Traps roll per step inside, one 10-30 blast (the body's is unavoidable)
-CABBOT_TAPE = ["yep, sure did.", "okay.", "ok."]  # CABBOT.MSG 158, 161, 164: the tape taken, BECOME_AN_INITIATE 2
+CABBOT_TAPE = ["#158", "#125/151/161", "#164"]  # CABBOT.MSG 158, 161, 164: the tape taken, BECOME_AN_INITIATE 2
 
 
 def zone(centres) -> frozenset[int]:
@@ -673,14 +675,14 @@ GLOW = [
 # to a player of IN 7 whose reaction with her is 2 or more (her get_reaction: 40 + karma with CH 3).
 BOS_ENTRY_LIFT, BOS_MAIN_LIFT, BOS_MAIN_LIFT_UPPER = 20102, 18540, 18536  # elev1; elev0 on BROHD12 e0 and e1
 BOS_UP_LIFT_34, BOS_UP_LIFT_12 = 20940, 14512  # elev0 on BROHD34 e0 ('1' BROHD12 e0); elev1 on BROHD12 e0 ('G')
-DOCTOR_RADS = ["i'm radiated."]  # BOSLORI.MSG 104 (IN 5): every rad taken away, a day passes
+DOCTOR_RADS = ["#104"]  # BOSLORI.MSG 104 (IN 5): every rad taken away, a day passes
 # VREE.MSG 112, 123 (IN 7), 140, 145 (vree29), 148
 VREE_DISK_TALK = [
-    "i need some technical information.",
-    "what's causing all the mutations?",
-    "why do you say that?",
-    "interesting theory. any proof?",
-    "thanks.",
+    "#112",
+    "#123",
+    "#140",
+    "#145",
+    "#130/148",
 ]
 
 
@@ -777,29 +779,29 @@ ROBES = [
 # The Cathedral and the Master: in Robes, both hands empty
 # (the nightkin and the Master's guards look at the hand slots), alone. A cocdoor takes the player to the hall (e1);
 # Lasher gives the red COC badge; the badge opens the red door; the towers' stairs lead to Morpheus, who takes a
-# player "with information about a Vault" to the Master (MSTRLR34 e0 13655).
+# player with a Vault's location to the Master (MSTRLR34 e0 13655).
 PID_COC_BADGE = 0x8E  # 142, red
-LASHER_BADGE = ["i just want to speak with the man in charge.", "thank you, sir."]  # LASHER.MSG 109, 149
+LASHER_BADGE = ["#109", "#149/195"]  # LASHER.MSG 109, 149
 RED_DOOR = 13888  # CHILDRN1 e1, creddoor: pid 141/142 used on it unlocks it
 MORPHEUS_TAKE_ME = [  # MORPH.MSG 103 (a Speech roll), 123, 128 (or 175 after a failed roll), 141: morphx2
-    "because i have such a deal for you...",
-    "i'm from a vault. you know what that is, right?",
-    "i have some information for the master about my vault.",
-    "i'm from a vault, and i'm willing to give the master the location.",
-    "okay, fine.",
+    "morph#103",
+    "morph#123",
+    "morph#128",
+    "morph#145/166/175",
+    "morph#141",
 ]
 MASTER_TALK = [  # MASTER.MSG: the way to master19 (his suicide) with Vree's word; rolls at 120, 127 and 150
-    "if you can prove to me that your unity is the best course for humanity",
-    "i can't know you represent the best future, unless you prove it to me.",
-    "so tell me.",
-    "that race being the mutants, of course.",
-    "you mean to change all the others into mutants, as well.",
-    "you've got a problem with your master plan.",
-    "i happen to know that your mutants are sterile.",
-    "have you talked to any of your mutants about this?",
-    "did you think to ask a female mutant?",
-    "sorry, your race is doomed.",
-    "sorry, this isn't an option for you.",
+    "master#103",
+    "master#116",
+    "master#118",
+    "master#120",
+    "master#123",
+    "master#127",
+    "master#133",
+    "master#137",
+    "master#156",
+    "master#163",
+    "master#150",
 ]
 
 
@@ -810,9 +812,9 @@ MASTER_TALK = [  # MASTER.MSG: the way to master19 (his suicide) with Vree's wor
 LAIR_LIFT = 16912
 CORRIDOR_STOPS = (19057, 20457)  # (57, 95), (57, 102)
 AIRGRD_PASS = [  # AIRGRD.MSG 114 (a Speech roll), 121; 118 when asked again
-    "i'm on important business. you have no right to stop and question me.",
-    "ok, thanks. see you around.",
-    "i'm bringing a message to our leader.",
+    "#114",
+    "#121",
+    "#118",
 ]
 LAIR_STAIRS = (20536, 20732, 20734)  # MSTRLR12 e0, mas2chid
 PID_FIRST_AID_KIT = 0x2F
@@ -909,8 +911,8 @@ def red_door_open(actor: Actor) -> bool:
 
 def stairs(actor: Actor, script: str, arrived) -> bool:
     """Up or down by a staircase: several objects carry its script; a click on one the player stands beside hits
-    the player (CHILDRN2 e1, live: "You see: Staircase."), so the ones 2+ hexes away go first. From afar the player
-    walks up first: the engine's own walk to a clicked staircase stops at a closed door ("You cannot get there.",
+    the player (CHILDRN2 e1, live: a look-at line), so the ones 2+ hexes away go first. From afar the player
+    walks up first: the engine's own walk to a clicked staircase stops at a closed door (the cannot-reach message,
     the Cathedral's red door), go_to opens it."""
     from f1 import scripts
 
@@ -977,8 +979,8 @@ CATHEDRAL = [
 
 # The Military Base and the vats: the scripts named below, read with f1.intdump; tiles from f1.mapfile.
 GATE_PASS = [  # the base's mutants (GENSUPR/VGATEMUT, 433): 111 needs the Robes (Speech +25); a failure is a fight
-    "i'm with the cathedral. let me by.",
-    "i'm a special mutant on a mission for your master.",
+    "gensupr#111",
+    "gensupr#110",
 ]
 MB_DOOR = 21271  # MBENT e0, MBOUT2IN: the Electronic Lock Pick at Lockpick -40; the third failure alerts the base
 MB_LIFT = 14520  # MBSTRG12 e0/e1, elev4 (elevator type 4: '1' MBSTRG12 e0 14920, '2' e1, '3' MBVATS12 e0 12944)
@@ -986,16 +988,26 @@ MB_PAIN = frozenset({21068, 25088, 15520, 26710})  # MBSTRG12 e0, painfeld: 10-3
 VATS_LIFT = 24120  # MBVATS12 e0/e1, elev5 (type 5: '3' e0 24520, '4' e1 24520)
 VATS_LIFT_UP = 12544  # MBVATS12 e0, elev4: '1' back to MBSTRG12 e0
 VATS_PAIN = frozenset({13544})  # MBVATS12 e0, painfeld
-KRUPPER_TALK = ["why? what is this place?", "ok, thanks."]  # KRUPPER 103, 109: then 20 s to be out of his sight
+KRUPPER_TALK = ["krupper#103", "krupper#109"]  # KRUPPER 103, 109: then 20 s to be out of his sight
 VCONCOMP = 12325  # MBVATS12 e1: Science (0) gives the interface; a failure costs 300 game seconds, nothing else
-VATS_CODE = ["display security codes.", "31914-1041-1251514"]  # VCONCOMP 103, 110: VATS_BLOWN, 300 game seconds
+VATS_CODE = ["#103", "#110/124"]  # VCONCOMP 103, 110: VATS_BLOWN, 300 game seconds
 BY_VCONCOMP = {12324, 12326}  # where the Agent stood for the Science tries
 LIEUTENANT = 23872  # MBVATS12 e1: he talks within 12 hexes, his guards (ltguard) fight within 6
 VATS_CELL_DOOR = 25740  # MBVATS12 e0, the script `door`: locked while its local_var(0) is 0
 VATS_CELL_BONES = 25951  # behind that door (map file): 3 stimpaks and a 10mm pistol
 PID_LOCK_PICKS = 0x54  # 84: DOOR.INT's use_obj_on rolls Lockpick +20 for them, the bare skill +0
 # DOOR.INT's answers to a lock pick try, with message 110 when the skill's critical failure jams the lock
-LOCK_RESULTS = ("you unlock the door", "not able to pick the lock", "broke your lockpicks", "beyond your ability")
+LOCK_RESULTS = (100, 103, 101, 110)  # DOOR.MSG: unlocked, not picked, the picks broke, beyond the skill
+
+
+def door_said(actor: Actor, n0: int, number: int) -> bool:
+    """The message box shows message NUMBER of DOOR.MSG since its line N0."""
+    return dialogue.holds(" ".join(state.messages_since(actor.mem, n0)), "door", number)
+
+
+def vconcomp_said(actor: Actor, n0: int) -> bool:
+    """The VATS computer gave its interface: VCONCOMP.MSG 176 in the message box since its line N0."""
+    return dialogue.holds(" ".join(state.messages_since(actor.mem, n0)), "vconcomp", 176)
 
 
 def said_since(actor: Actor, n0: int, text: str) -> bool:
@@ -1068,7 +1080,7 @@ def to_the_vats(actor: Actor) -> bool:
 
 
 def past_krupper(actor: Actor) -> bool:
-    """MBVATS12 e0: Krupper stops a Robe-wearer (103, 109, "You need to leave.", then 20 game seconds to be out of his
+    """MBVATS12 e0: Krupper stops a Robe-wearer (103, 109, his warning, then 20 game seconds to be out of his
     sight or he fights): straight on to the lift's trigger, '4' to e1."""
     if on_map(actor, "MBVATS12") and actor.snap().elevation == 1:
         return True
@@ -1090,7 +1102,7 @@ def vats_computer(actor: Actor):
 
 
 def vats_interface(actor: Actor) -> bool:
-    """VCONCOMP, MBVATS12 e1: Science until "You manage to get an interface screen" (33 % a try with Science 33).
+    """VCONCOMP, MBVATS12 e1: Science until its interface message (VCONCOMP.MSG 176; 33 % a try with Science 33).
     Its technicians stand in front of it: the clicks are aimed where the engine names the computer."""
     comp = vats_computer(actor)
     targets = frozenset({comp.address}) if comp else frozenset()
@@ -1099,28 +1111,28 @@ def vats_interface(actor: Actor) -> bool:
         actor.use_skill_on(
             "science",
             VCONCOMP,
-            lambda n0=n0: said_since(actor, n0, "interface screen") or said_since(actor, n0, "too"),
+            lambda n0=n0: vconcomp_said(actor, n0) or said_since(actor, n0, "too"),
             targets=targets,
         )
-        if said_since(actor, n0, "interface screen"):
+        if vconcomp_said(actor, n0):
             return True
     return False
 
 
 def pick_lock(actor: Actor, tile: int, door: int, tries: int = 5) -> bool:
     """A door scripted by DOOR.INT: the Lock Picks used on it (Lockpick +20), or the bare skill once they broke. Its
-    answer is read from the message box after the click. "You unlock the door." sets the script's local_var(0); the
+    answer is read from the message box after the click. DOOR.MSG 100 (unlocked) sets the script's local_var(0); the
     engine's lock bit stays set until the door is next used, and that use unlocks and opens it."""
     got = None
     for _ in range(tries):
         n0 = actor.mem.glob("disp_start")
-        answered = lambda n0=n0: next((r for r in LOCK_RESULTS if said_since(actor, n0, r)), None) is not None
+        answered = lambda n0=n0: next((r for r in LOCK_RESULTS if door_said(actor, n0, r)), None) is not None
         if actor._count(PID_LOCK_PICKS):
             actor.use_item_on(PID_LOCK_PICKS, tile, answered, targets=frozenset({door}))
         else:
             actor.use_skill_on("lockpick", tile, answered, targets=frozenset({door}))
         win32.wait_for(answered, 3, 0.1)
-        got = next((r for r in LOCK_RESULTS if said_since(actor, n0, r)), None)
+        got = next((r for r in LOCK_RESULTS if door_said(actor, n0, r)), None)
         actor.log.emit("lock_pick", tile=tile, picks=actor._count(PID_LOCK_PICKS), result=got)
         if got in (LOCK_RESULTS[0], LOCK_RESULTS[3]) or said_since(actor, n0, "is jammed"):  # unlocked, or jammed
             break
@@ -1178,7 +1190,7 @@ def the_vats_code(actor: Actor) -> bool:
     talking = lambda: actor.snap().screen == "dialogue"
     if not actor.click_object(VCONCOMP, talking, 60, aims=quests.SCENERY_AIMS, targets=frozenset({comp.address})):
         return False
-    win32.wait_for(lambda: actor.mem.glob("gdNumOptions") > 0, 5, 0.1)  # "Command?" shows before its options (live)
+    win32.wait_for(lambda: actor.mem.glob("gdNumOptions") > 0, 5, 0.1)  # its prompt shows before its options (live)
     dialogue.converse_strict(actor.mem, VATS_CODE, log=actor.log)
     time.sleep(1.0)
     return quests.gvar(actor, "VATS_BLOWN") == 1
@@ -1215,7 +1227,7 @@ def out_of_the_base(actor: Actor) -> bool:
     return ok
 
 
-OVERSEER_FAREWELL = ["[more]", "[done]"]  # OVER.INT over81: four [More], then [Done]
+OVERSEER_FAREWELL = ["modreact#106"]  # OVER.INT over81: four [More], then [Done]
 
 
 def the_ending(actor: Actor, limit_s: float | None = None) -> bool:
@@ -1249,7 +1261,7 @@ def the_ending(actor: Actor, limit_s: float | None = None) -> bool:
     return False
 
 
-ZACK_TRADE = ["ok."]  # ZACK.MSG 104: straight to the barter screen (gdialog_barter); his stock is the guncache locker
+ZACK_TRADE = ["#104"]  # ZACK.MSG 104: straight to the barter screen (gdialog_barter); his stock is the guncache locker
 
 
 def gun_runners_ammo(actor: Actor) -> bool:

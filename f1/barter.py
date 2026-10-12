@@ -108,7 +108,7 @@ def buy(
     have = actor._count(pid)
     mem = actor.mem
     # Walk up and talk; an empty plan stops at the first node with the talk open, where B opens the barter screen
-    # (gdialog.c talk_to_pressed_barter). A plan may reach the screen itself (Killian's "I want to buy something.").
+    # (gdialog.c talk_to_pressed_barter). A plan may reach the screen itself (Killian's buy option, KILLIAN.MSG 104).
     quests.talk(actor, merchant, plan, strict=True)
     if not win32.wait_for(lambda: screen_open(mem), 3, 0.1) and dialogue.read(mem).active:
         session.press("b")  # the plan left the talk open without trading: the dialogue window's Barter

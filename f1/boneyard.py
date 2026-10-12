@@ -40,48 +40,48 @@ MFC_WANTED = 2  # spare Micro Fusion Cells (50 charges each) kept for the Plasma
 
 # REGULATR.MSG 104: the gate guard's one-time talk at the arrival (routes.TOWN_GREETINGS has it too)
 MILES_JOB = [
-    "that smock makes you look like a scientist.",
-    "so you make bullets for adytum.",
-    "but the hub merchants make a profit off of you and the town.",
-    "i could try to get the parts to fix the hydroponic farms.",
+    "#104",
+    "#108",
+    "#113",
+    "#120",
 ]  # MILES.MSG 104, 108, 113, 120: FIX_FARM 1
-MILES_PARTS = ["yes, here they are.", "sure, i'll be back after he's fixed them."]  # MILES.MSG 124, 129: 9302
-MILES_ARMOR = ["sounds good. i'll go talk to mrs. stapleton."]  # MILES.MSG 139: CHEMISTRY_BOOK 1
-SMITTY_FIX = ["i need you to fix these parts for me"]  # SMITTY.MSG 105: 1 game hour, FIX_FARM 9303
-SMITTY_TURBO = ["well, i have one right here."]  # SMITTY.MSG 126: 2 game hours, the Plasma Rifle -> the Turbo
+MILES_PARTS = ["#124", "#129"]  # MILES.MSG 124, 129: 9302
+MILES_ARMOR = ["#139"]  # MILES.MSG 139: CHEMISTRY_BOOK 1
+SMITTY_FIX = ["#105"]  # SMITTY.MSG 105: 1 game hour, FIX_FARM 9303
+SMITTY_TURBO = ["#126"]  # SMITTY.MSG 126: 2 game hours, the Plasma Rifle -> the Turbo
 CHUCK_READING = [
-    "i'm looking for a little advice.",
-    "why do you assume that i need something?",
-    "now that you mention it, perhaps you can give me some advice.",
-    "[more]",
-    "hmm. thanks for the advice.",
+    "#171",
+    "#106",
+    "#119",
+    "#125",
+    "#126",
 ]  # CHUCK.MSG 171/106, 119, 125, 126: one card a talk, the Fool (LK +1) last
 RAZOR_DISK = [
-    "are you the leader of this gang?",
-    "if you're not a gang, then what are you?",
-    "defend yourselves from who?",
-    "zimmerman's son?",
-    "what did he do?",
-    "why haven't you given this to josh's father?",
-    "why don't i give him the disk?",
-    "anything to help.",
-    "well, where are these gun runners?",
-    "okay, give me the holodisk",
-    "see you later.",
+    "#102/133/163",
+    "#111",
+    "#124/128",
+    "#138/178",
+    "#144/180",
+    "#147",
+    "#149",
+    "#152",
+    "#185",
+    "#188",
+    "#155",
 ]  # RAZOR.MSG 102, 111, 124, 138, 144, 147, 149, 152, 185, 188, 155: BLADES 9101, the Regulator Transmission
-RAZOR_PEACE = ["no thanks, i've seen enough action this week."]  # RAZOR.MSG 198: BLADES 9104, 8 game hours
+RAZOR_PEACE = ["#198"]  # RAZOR.MSG 198: BLADES 9104, 8 game hours
 MOAT_IN = [
-    "i want to buy some weapons.",
-    "i want to buy weapons from zack.",
-    "i need to speak to your boss.",
+    "#104",
+    "#119",
+    "#115",
 ]  # MOATGRD.MSG 104, 119, 115; never 102, 103, 111 (a timer, then the Gun Runners attack)
 GABRIEL_REWARD = [
-    "i have some friends who can really use some of your weapons.",
-    "get many visitors",
-    "i've killed all the deathclaws.",
-    "thank you.",
+    "#170/171",
+    "#103/141",
+    "#133/144/146",
+    "#154",
 ]  # GABRIEL.MSG 170, 103, 141/144, 154: GUN_RUNNER 9202, karma +1, 1000 XP; never 148 (the arc lost)
-MIKE_THANKS = ["you are welcome, and keep the supplies for yourself."]  # BYMIKE.MSG 113: karma +1, 4 Stimpaks
+MIKE_THANKS = ["#113"]  # BYMIKE.MSG 113: karma +1, 4 Stimpaks
 
 
 def stat(actor: Actor, index: int) -> int:

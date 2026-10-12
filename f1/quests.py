@@ -387,7 +387,7 @@ def flee(actor: Actor, turns: int = 15) -> bool:
 # radscorpions killed it at level 4 on the road to Junktown (a full run at Full HD, twice: HP 47 to death
 # in about 55 s each, poisoned, half its shots missed); four mantises in the second run took all three stimpaks
 PACK = 4
-# Road foes fled whatever their number: "A patrol unit of super mutants" hit the level-8 Agent for 70 of its 59 HP
+# Road foes fled whatever their number: a super mutant patrol hit the level-8 Agent for 70 of its 59 HP
 # with one shot (a full run at Full HD)
 DEADLY = ("Mutant", "Deathclaw", "Nightkin")
 

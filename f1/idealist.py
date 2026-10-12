@@ -96,28 +96,28 @@ JARVIS_BED = 22728  # SHADYW: JARVIS.INT use_obj_on: an Antidote cures him, 400 
 # THERESA.MSG path A (reaction level 2): 103 -> 110 (IQ 6) -> a Speech roll, once (local_var 7) -> Theresa08 sets
 # CALM_REBELS 2 -> 123; 750 XP when the talk ends
 THERESA_CALM = [
-    "it's going pretty well, thanks",
-    "the overseer is simply trying to protect us",
-    "don't worry, i'll take care of it",
+    "#103",
+    "#110",
+    "#123",
 ]
 # SSGUIDE.MSG: all seven of DialogMain's questions in one talk give 250 XP (local_var 5); a drawn weapon only gets
-# "put that away" (DialogWeapon)
+# the drawn-weapon warning (DialogWeapon)
 KATRINA_QUESTIONS = [
-    "please help me",
-    "what should i do if i get hurt",
-    "where can i get some better equipment",
-    "tell me more about bartering",
-    "tell me about this place",
-    "tell me about the rest of the world",
-    "tell me about yourself",
-    "where was this vault of yours",
+    "#114",
+    "#126",
+    "#127",
+    "#134",
+    "#128",
+    "#129",
+    "#130",
+    "#138",
 ]
-COOK_COMPLIMENT = ["hmmm! that smells really good"]  # COOK.MSG 102: only at the very first talk, after an LK check
-CURTIS_ROTATION = ["what are you doing", "you have all of your fields planted", "you only plant some of your fields"]
-RAZLO_ANTIDOTE = ["i have a sample of the radscorpion poison"]  # RAZLO.MSG 146, 06:00-19:00: 4 h, 250 XP
-RAZLO_GIFT = ["tandi has been kidnapped", "i think that she was kidnapped", "many people, including myself"]
+COOK_COMPLIMENT = ["#102"]  # COOK.MSG 102: only at the very first talk, after an LK check
+CURTIS_ROTATION = ["#108", "#114", "#117"]
+RAZLO_ANTIDOTE = ["#146"]  # RAZLO.MSG 146, 06:00-19:00: 4 h, 250 XP
+RAZLO_GIFT = ["#105", "#110/194", "#114"]
 # GARL.MSG 133 (IQ 5) reaches garl15 with no roll, then 141 (IQ 6, Speech >= 45): Speech +10 or a CH check
-GARL_TALKED_DOWN = ["i've come in peace to negotiate", "i represent a threat you don't even understand"]
+GARL_TALKED_DOWN = ["#133", "#141"]
 
 
 def karma(actor: Actor) -> int:
@@ -190,8 +190,8 @@ def the_floor(actor: Actor) -> bool:
 def library(actor: Actor) -> bool:
     """Science on each library computer: 350 XP and 6 hours each. LIBCOMP.INT use_skill_on_p_proc answers "You use
     the Vault computer teaching system." at once, then, after a fade and 6 hours, "...researching some important
-    information." with the XP (its do_check(IN) passes at IN 10), or "...doing nothing of importance" when that check
-    fails; a computer used before, "...learn nothing of importance". Every one of those ends it: the lines since the
+    information." with the XP (its do_check(IN) passes at IN 10), or LIBCOMP.MSG 104 when that check
+    fails; a computer used before, LIBCOMP.MSG 102. Every one of those ends it: the lines since the
     use, joined (the box wraps them), are read for them. Read three lines back only, the answer after the fade was
     missed and a run skipped the step."""
     for tile in LIBRARY_COMPUTERS:
@@ -199,7 +199,7 @@ def library(actor: Actor) -> bool:
 
         def done(xp0=xp0, n0=n0) -> bool:
             text = " ".join(state.messages_since(actor.mem, n0))
-            return experience(actor) > xp0 or "nothing of importance" in text or "important information" in text
+            return experience(actor) > xp0 or any(dialogue.holds(text, "libcomp", n) for n in (102, 103, 104))
 
         beside(actor, tile)
         actor.use_skill_on("science", tile, done, targets=scripted(actor, tile, "libcomp"))
@@ -210,7 +210,7 @@ def library(actor: Actor) -> bool:
 
 def beside(actor: Actor, tile: int) -> bool:
     """Onto a free hex next to `tile`. The engine's own walk to an object can fail where ours does not: Science on
-    the library's computer at 17533 from two hexes away answered "You cannot get there." every time, and from the
+    the library's computer at 17533 from two hexes away answered that it could not be reached every time, and from the
     hex beside it (17534) it worked."""
     s = actor.snap()
     obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
@@ -268,7 +268,7 @@ def cook(actor: Actor) -> bool:
     steps = quests.talk(actor, "cook", COOK_COMPLIMENT, strict=True) or []
     if actor.snap().screen == "dialogue":  # no compliment offered: whatever else there is ends the talk
         settle(actor)
-    praised = karma(actor) > k0 or any("smells really good" in chosen.lower() for _r, _o, chosen in steps)
+    praised = karma(actor) > k0 or any(dialogue.holds(chosen, "cook", 102) for _r, _o, chosen in steps)
     actor.log.emit("cook", praised=praised)
     return praised
 
@@ -488,7 +488,7 @@ def the_rubble(actor: Actor) -> bool:
 PID_DYNAMITE_ARMED = 0xCE
 CAVE_ROCKS = (21343, 21345)
 CAVE_SAFE = 21155
-SETH_BACK_TO_CAVES = ["i want to know about the radscorpions", "take me to the radscorpion caves", "yes."]
+SETH_BACK_TO_CAVES = ["#115", "#118", "#126"]
 
 
 def back_to_the_caves(actor: Actor) -> bool:
@@ -572,7 +572,7 @@ def the_cave_wall(actor: Actor) -> bool:
     nav.go_to(actor, away, max_steps=40, fight=False)
     down = win32.wait_for(lambda: quests.mvar(actor, 0) != 0, 75, 0.5)
     # CAVEWALL sets map_var 0 first, then fades out (600) and only after it gives the karma and the XP: read too
-    # soon, a collapse looked like +0 karma, +0 XP ("...sealed in their cave", +300, +3)
+    # soon, a collapse looked like +0 karma, +0 XP (the cave sealed, +300, +3)
     win32.wait_for(lambda: karma(actor) >= k0 + 3, 15, 0.25)
     actor.log.emit("cave_wall", down=down, karma=karma(actor) - k0, xp=experience(actor) - xp0)
     return down and karma(actor) >= k0 + 3
@@ -606,24 +606,24 @@ KILLIAN_FRONT_DOOR = 27483  # JUNKKILL: KILDOOR1 shuts it on every map entry; Ke
 # LARS.MSG: Lars00 107 -> Lars05 120 (IQ 6) -> Lars07 123 -> Lars08 sets BUST_SKULZ 1. Only before the confession or
 # after the raid: while CAPTURE_GIZMO is 1 his talk is about the raid.
 LARS_SKULZ = [
-    "can you give me the big picture on junktown",
-    "so, what keeps you lawboys from just busting gizmo and the skulz",
-    "maybe i can help you with that",
+    "#107",
+    "#120",
+    "#123",
 ]
-# SHERRY.MSG: the first talk ends at once and safely ("Bring it on!" in Sherry02 is a fight); the second, Sherry15:
+# SHERRY.MSG: the first talk ends at once and safely (Sherry02's challenge line is a fight); the second, Sherry15:
 # 138 (IQ 5) -> 142 (IQ 6) -> 145 (IQ 6) -> a Speech roll -> Sherry19 147 -> Sherry21 sets SHERRY_TURNS 1 and her
 # local_var 6 to the day; more than a day later (critter_p_proc) she leaves the gang, SHERRY_TURNS 2.
-SHERRY_MEET = ["i'm new to this town", "sorry, i thought this was the bathroom"]
+SHERRY_MEET = ["@105", "#110"]
 SHERRY_TURN = [
-    "what have you been up to lately",
-    "you could always try doing something else",
-    "but what will you do when you get older",
-    "you should probably get out while you still can",
+    "#138",
+    "#142",
+    "#145",
+    "#147",
 ]
 # Sherry22: 166 (BUST_SKULZ set) -> Sherry27 163 (IQ 6) -> Sherry28 sets GENERIC_FILLER_20 (her testimony); then
 # Lars12 139 -> Lars14 145 -> Lars16 sets BUST_SKULZ 2, and his talk gives 500 XP and karma +3
-SHERRY_TESTIFY = ["i need your testimony to put away the skulz", "they have been hurting people"]
-LARS_TESTIMONY = ["i have testimony about the illegal activities", "i've convinced one of them, sherry"]
+SHERRY_TESTIFY = ["#166", "#163"]
+LARS_TESTIMONY = ["#139", "#145"]
 
 
 def lars_skulz(actor: Actor) -> bool:
@@ -669,29 +669,29 @@ TRISH_HELLO: list[str] = []  # TRISH.INT Trish25 in the bar (16:00-03:30, closed
 # Saul20 rolls Speech: 172 (IQ 6) sets TRISH_STATUS 8, else 173 and another roll (Saul22). The talk's end then adds
 # 16 and 250 XP.
 SAUL_TRISH = [
-    "what do you do here",
-    "hmm. what's the deal",
-    "how did you become a boxer",
-    "what happened to your brothers",
-    "why do you stay in junktown",
-    "yes, i've met trish",
-    "she's concerned for your welfare",
-    "i think she's worried about you",
+    "#107",
+    "#113",
+    "#136",
+    "#142",
+    "#151",
+    "#159",
+    "#172",
+    "#173",
 ]
 CRASH_ROOM = (19089, 19289, 19489)  # JUNKKILL: CRASHRM's spatial hexes, room #1
-MARCELLE_ROOM = ["i need a good night's sleep", "just one night"]  # 25 caps: RENT_TIME = tomorrow
-ROOM_REST = ["[yes]"]  # CRASHRM: rest until 10:00; CrashRm02 then creates the raider and sets map_var 3 to 1
-MARCELLE_HELP = ["hmm. i'll check it out"]  # Marcelles00 sets SAVE_SINTHIA 1
+MARCELLE_ROOM = ["#121", "#135/156"]  # 25 caps: RENT_TIME = tomorrow
+ROOM_REST = ["#101"]  # CRASHRM: rest until 10:00; CrashRm02 then creates the raider and sets map_var 3 to 1
+MARCELLE_HELP = ["#104"]  # Marcelles00 sets SAVE_SINTHIA 1
 # JTRAIDER.MSG: phase 1 (he talks on sight): Raider0 105 -> Raider4 111 -> Raider5 114 -> Raider6 (after it, a player
 # within 4 hexes is attacked); phase 2, the next talk: Raider9 123 -> Raider14 132 -> a Speech +20 roll sets var6;
-# phase 3: Raider21 146 -> Raider22 149 "Sure." -> Raider24 154, 100 caps -> safe(): map_var 4 (JUNKKILL's
+# phase 3: Raider21 146 -> Raider22 149 -> Raider24 154, 100 caps -> safe(): map_var 4 (JUNKKILL's
 # map_update gives 1000 XP), SAVE_SINTHIA 2. var1, var2 and var6 are script variables: no load between the phases.
 HOSTAGE_PHASES = [
-    ["there is no need for violence", "we can talk this over", "by holding this woman hostage"],
-    ["why do you want to hurt her", "i trust you. let's work through this"],
-    ["you tell me. you're in charge", "sure.", "here's your money"],
+    ["#105", "#111", "#114"],
+    ["#123", "#132"],
+    ["#146", "#149", "#154"],
 ]
-NEAL_URN = ["i've got your urn back for you"]  # NEAL.MSG 144 -> Neal11: karma +2
+NEAL_URN = ["#144"]  # NEAL.MSG 144 -> Neal11: karma +2
 
 
 def day(actor: Actor) -> int:
@@ -850,7 +850,7 @@ def the_hostage(actor: Actor) -> bool:
 
 def neals_urn(actor: Actor) -> bool:
     """The urn off the bar by the Steal skill (TROPHY.INT use_skill_on: the urn always comes, then a Steal roll at 0;
-    a failure, "You swipe the urn, and hope that nobody saw...", sets map_var 4, caught stealing, and the step fails
+    a failure (its own message) sets map_var 4, caught stealing, and the step fails
     for a reload). A click on the Bar only uses it: the pickup handler that the catalogue read as "by hand, while Neal
     sleeps" runs for items only (gmouse.c), five tries showed it. Neal sleeps 04:10-13:00 (NEAL.INT):
     the try is made before noon."""
@@ -868,8 +868,8 @@ def neals_urn(actor: Actor) -> bool:
 
 
 def urn_returned(actor: Actor) -> bool:
-    """Neal talks from 16:00 to 04:10: "I've got your urn back for you." -> karma +2. NEAL.INT talk_p_proc floats
-    "Zzzz" from 04:10 to 13:00 and "We're closed. Come back around four o'clock." from 13:00 to 16:00; both read live
+    """Neal talks from 16:00 to 04:10: NEAL.MSG 144 -> karma +2. NEAL.INT talk_p_proc floats
+    "Zzzz" from 04:10 to 13:00 and its closing-hours line from 13:00 to 16:00; both read live
     by f1.floats, where this step had "after 12:00" and failed five times. A later run got
     past it from those words, resting to 14:00, 16:00, then 18:00."""
     k0 = karma(actor)
@@ -997,10 +997,10 @@ IDEALIST_JUNKTOWN = [
 
 # The Hub (planned from the scripts and maps). First part: the
 # arrival, Deputy Fry, Stapleton's disk, the shopping, the Junk for Necropolis' pump.
-FRY_HELLO = ["what is this place?", "that's it, thanks.", "no."]  # FRY.MSG 103, 116, 109: DECKER_KNOWN 1
+FRY_HELLO = ["#103", "#116", "#109"]  # FRY.MSG 103, 116, 109: DECKER_KNOWN 1
 # STAPLE.MSG 105, 110, 114: 750 caps, no roll; only while FIND_WATER_CHIP != 2 (before the chip's hand-in). Never
 # 116, the blowtorch.
-STAPLETON_DISK = ["i am looking for a water chip.", "can i have the holodisk?", "sounds good. here's the money."]
+STAPLETON_DISK = ["#105", "#110/112", "#114"]
 PID_VAULT_RECORDS, PID_JUNK = 230, 0x62
 OLDTOWN_JUNK = 15671  # HUBOLDTN e0: an unscripted crate by Jacob's shop, the Junk Necropolis' pump wants
 
@@ -1008,9 +1008,7 @@ OLDTOWN_JUNK = 15671  # HUBOLDTN e0: an unscripted crate by Jacob's shop, the Ju
 def fry(actor: Actor) -> bool:
     if quests.gvar(actor, "DECKER_KNOWN"):
         return True
-    rest_until(
-        actor, 7, 17
-    )  # FryDialog: he sleeps from 18:00 to 06:00 ("Pfffftttt . . . Chrrrr . . ."); the Hub by day
+    rest_until(actor, 7, 17)  # FryDialog: he sleeps from 18:00 to 06:00 (his snore floats); the Hub by day
     actor.holster(True)
     quests.talk(actor, "fry", FRY_HELLO, strict=True)
     settle(actor)
@@ -1052,13 +1050,13 @@ def hub_map(actor: Actor, name: str) -> bool:
 
 # The Thieves' Circle under Old Town (HUBOLDTN e1): the stairs THFU2D at 18878, three locked doors on the way to
 # Loxley (19482, 22684, 25882: DOOR.INT, Lockpick 0, a critical failure jams; 22684 keeps off the floor trap at
-# 21080), Loxley's test (LOXLEY.MSG 114, 167, 127, 131: STEAL_NECKLACE 1, 900 XP; "i'm " alone would match 121, the
+# 21080), Loxley's test (LOXLEY.MSG 114, 167, 127, 131: STEAL_NECKLACE 1, 900 XP; a phrase alone would match 121, the
 # jail line), Jasmine's kit (JASMINE.MSG 111: Lock Picks, 2 Flares). Nothing may be picked up in the Circle: Cleo,
 # Smitty and Jasmine attack on a pickup.
 CIRCLE_STAIRS = "thfu2d"
 CIRCLE_DOORS = (19482, 22684, 25882)
-LOXLEY_TEST = ["what is this place?", "okay, what do i have to do?", "what's the test?", "i'm ready!"]
-JASMINE_KIT = ["no problem. i'm outta here."]
+LOXLEY_TEST = ["#108/114/174", "#167", "#127", "#131"]
+JASMINE_KIT = ["#111"]
 PID_LOCK_PICKS, PID_NECKLACE, PID_ELECTRONIC_LOCKPICK = 84, 119, 77
 
 
@@ -1091,12 +1089,12 @@ def circle_doors(actor: Actor) -> bool:
         if door is None or not locked(actor, door):
             continue
         beside(actor, tile)
-        # DOOR.INT's "You unlock the door." only sets its local_var(0); the engine's lock bit goes at the next use,
+        # DOOR.INT's unlock message (DOOR.MSG 100) only sets its local_var(0); the engine's lock bit goes at the next use,
         # which opens it (routes.pick_lock): so the door is used first, and picked only when that does not open it
         if not nav.open_door(actor, tile):
             pick_lock(actor, tile, door.address, tries=8)
             if not nav.open_door(actor, tile):
-                # a critical failure jams the lock ("The lock is jammed.", the 1x chain) until midnight
+                # a critical failure jams the lock (the jammed-lock message, the 1x chain) until midnight
                 # (CE scripts.c gtime_q_process: obj_unjam_all_locks): a rest past it, and the skill again
                 # midnight unjams only the map loaded then, and neither the Circle nor Old Town offers a rest (no rest
                 # buttons, live); the other way (CE map.c): a map re-entered 24 hours after it was left unjams them
@@ -1139,14 +1137,15 @@ def jasmines_kit(actor: Actor) -> bool:
 # the Lockpick skill at -20 (107 unlocked, 110 failed, 109 jammed; the third failed try sets off its trap, 108);
 # opening it rolls Traps (104: the trap goes off, 6-36). Then the Necklace (pid 119) inside.
 HEIGHTS_BOX = 24516
-GEORGE_APPOINTMENT = ["i have an appointment with mr. hightower"]  # HTWRGRGE.MSG 104
-LEON_PASS = ["i must speak with mr. hightower.", "thank you."]  # HTWRLEON.MSG 102 (Speech 0), 106
-HIGHTOWER_BYE = ["my name is "]  # HIGHTOWR.MSG 104 "My name is <name>.  Leon let me in.": Daren04, shown out
-BOX_UNLOCKED = ("successfully unlocked the strongbox", "already unlocked")
-BOX_TRAP = "set off a trap"
+GEORGE_APPOINTMENT = ["#104"]  # HTWRGRGE.MSG 104
+LEON_PASS = ["#102", "#106"]  # HTWRLEON.MSG 102 (Speech 0), 106
+HIGHTOWER_BYE = ["@104"]  # HIGHTOWR.MSG 104, the player's name, 105: Daren04, shown out
+BOX_ENDS = (107, 106, 108, 109)  # HTWRBOX.MSG: unlocked, already unlocked, the trap, the lock jammed
 
 
-HIGHTOWERS_HEX = 24522  # HIGHTOWR critter_p_proc: by day he starts his talk (every answer ends in "the door") there
+HIGHTOWERS_HEX = (
+    24522  # HIGHTOWR critter_p_proc: by day he starts his talk (every answer ends in him showing the player out) there
+)
 
 
 def box_side(actor: Actor) -> bool:
@@ -1192,15 +1191,15 @@ def the_necklace(actor: Actor) -> bool:
         return loot_the_box(actor)  # Hightower's hex, and his talk shows the player out for good (a full run)
     if quests.mvar(actor, 3) == 0:  # the front door (HTWRDOOR) opens for the player only with map_var 3 set
         # HTWRGRGE's daytime opening never ran live (its critter_p_proc waits on a script variable); his talk does:
-        # George01b, Speech +10 (121 for the Idealist), George05 sets map_var 3 ("...I'll let him know you're here")
+        # George01b, Speech +10 (121 for the Idealist), George05 sets map_var 3 (his announcing line)
         actor.holster(True)
         quests.talk(actor, "htwrgrge", GEORGE_APPOINTMENT, strict=True)
         settle(actor)
         if quests.mvar(actor, 3) == 0:
             return False
     heal_below(actor, 40)  # the box's trap: 6-36 damage
-    # Leon (HTWRLEON, "Mysterious Stranger") starts a talk once within 6 hexes: 102 "I must speak with Mr.
-    # Hightower." is a Speech roll at 0 (111 here), then 106 "Thank you."; left unanswered, the skill keys sent into
+    # Leon (HTWRLEON) starts a talk once within 6 hexes: 102 is a Speech roll at 0
+    # (111 here), then 106; left unanswered, the skill keys sent into
     # it ended in a fight with the household, four deaths. Every walk inside ends with any talk settled.
     nav.open_door(actor, 21928)  # in by the front door first: the way to the box plans through it only once open
     nav.go_to(actor, {22325, 22326}, max_steps=20)
@@ -1221,7 +1220,7 @@ def the_necklace(actor: Actor) -> bool:
     targets = frozenset({box.address}) if box else frozenset()
     for _ in range(6):
         n0 = actor.mem.glob("disp_start")
-        # the lock's own answer: the aim's hovers print "You see a locked strongbox." too, and that ended each try
+        # the lock's own answer: the aim's hovers print the box's look-at line too, and that ended each try
         # before its click had answered (three tries, 33 s each, the 1x chain)
         said = lambda n0=n0: " ".join(
             m for m in state.messages_since(actor.mem, n0) if not m.lower().startswith("you see")
@@ -1231,7 +1230,7 @@ def the_necklace(actor: Actor) -> bool:
         win32.wait_for(answered, 3, 0.1)
         text = said()
         actor.log.emit("strongbox", said=text[-160:])
-        if any(k in text for k in BOX_UNLOCKED) or BOX_TRAP in text or "jammed" in text:
+        if any(dialogue.holds(text, "htwrbox", n) for n in BOX_ENDS):
             break
     return loot_the_box(actor)
 
@@ -1246,7 +1245,7 @@ def loot_the_box(actor: Actor) -> bool:
     return actor._count(PID_NECKLACE) > 0
 
 
-LOXLEY_NECKLACE = ["here's the necklace"]  # LOXLEY.MSG 188: STEAL_NECKLACE 2, 500 XP (loxley29)
+LOXLEY_NECKLACE = ["#188"]  # LOXLEY.MSG 188: STEAL_NECKLACE 2, 500 XP (loxley29)
 
 
 def necklace_to_loxley(actor: Actor) -> bool:
@@ -1282,11 +1281,11 @@ def jasmines_reward(actor: Actor) -> bool:
 # Safe before the chip's hand-in (checked in the scripts). The Barter -15 line for 1000 caps is one try at about 17 %
 # (not taken: the route takes only one-roll checks that cannot fail).
 WATER_DEAL = [
-    "do you have a water chip?",
-    "my vault's chip broke",
-    "how much are we talking about?",
-    "alright, here is the money.",
-    "yes, the vault needs water.",
+    "#104/109",
+    "#114",
+    "#118/135",
+    "#141",
+    "#149",
 ]
 
 
@@ -1309,13 +1308,13 @@ def caps(actor: Actor) -> int:
     return actor._count(PID_CAPS)
 
 
-# Irwin (HUBDWNTN e0 29124, IRWIN): from level 5, "Problems? Maybe I can help you." (935:102) then "Just tell me
+# Irwin (HUBDWNTN e0 29124, IRWIN): from level 5, IRWIN.MSG 102 (935:102) then 107
 # where..." (935:107): an hour passes and the player is on his farm, HUBMIS1, where seven raiders ("Mercenary",
-# 30 HP, FARMRAID) attack on sight. DESTROY_MASTER_3 turns 2 once all are dead; back in town "It sure is, buddy."
+# 30 HP, FARMRAID) attack on sight. DESTROY_MASTER_3 turns 2 once all are dead; back in town IRWIN.MSG 113
 # (935:113): 500 XP, karma +2, a .223 Pistol (DESTROY_MASTER_3 501). The farm: Metal Armor on the floor at 18492,
 # stimpaks at 21304 and in the bookcases 19691, 21489.
-IRWIN_JOB = ["problems? maybe i can help you.", "just tell me where and i'll take care of the rest."]
-IRWIN_PAID = ["it sure is, buddy."]
+IRWIN_JOB = ["#102", "#107"]
+IRWIN_PAID = ["#113"]
 PID_METAL_ARMOR, PID_CAPS = 2, 0x29
 FARM_ARMOR = 18492
 # IRWIN takes level 5; the farm's seven raiders took HP 53 to 4 at level 5 in leather armor: a later visit
@@ -1393,21 +1392,21 @@ def irwin_paid(actor: Actor) -> bool:
 
 # Necropolis (planned from the scripts): the ghoul
 # leader's three books (LEADER leader19a, Repair < 60), the Watershed's spare Junk, past Harry by sneaking (no Speech
-# line is sure below 120: "But I am a ghoul!" is -20), the pump fixed with the Junk before the chip (Repair -5, plain
+# line is sure below 120: HARRY.MSG 103 is -20), the pump fixed with the Junk before the chip (Repair -5, plain
 # failures retried; NH2OPUMP), then the chip by the Agent's steps, and out past Harry again.
 LEADER_BOOKS = [
-    "yes, i'm looking for water",
-    "who is this set",
-    "why does he let you survive",
-    "where does all of this water come from",
-    "how do i get to the watershed",
-    "thanks.",
-    "my people need the water chip to survive",
-    "your pump could be fixed",
-    "do you mean these parts",
-    "anything else i should know",
+    "#102",
+    "#112",
+    "#118",
+    "#120",
+    "#126/175",
+    "#129",
+    "#134",
+    "#138",
+    "#145",
+    "#166",
 ]
-HARRY_GHOUL = ["but i am a ghoul", "just passing through"]  # HARRY.MSG 103 (Speech -20), 150 (taken, stands)
+HARRY_GHOUL = ["#103", "#150"]  # HARRY.MSG 103 (Speech -20), 150 (taken, stands)
 PID_DEANS_ELECTRONICS = 76
 WATRSHD_SPARE_JUNK = 16658  # WATRSHD e0, sewer region C (the Cover and Sewer Hole at e1 17290, the ladder up at 15888)
 WATRSHD_PUMP = 12257  # WATRSHD e1, NH2OPUMP: the Junk used on it, Repair -5
@@ -1466,7 +1465,7 @@ def sneak_ready(actor: Actor) -> bool:
 
 def past_harry_sneaking(actor: Actor, goals: set[int]) -> bool:
     """To `goals` round Harry's notice while sneaking. The game re-rolls the sneak each 60 game s: the crossing
-    waits for a working one, at most SNEAK_WAIT_S game seconds, then goes anyway. If he talks: "But I am a ghoul!"."""
+    waits for a working one, at most SNEAK_WAIT_S game seconds, then goes anyway. If he talks: HARRY.MSG 103."""
     s = actor.snap()
     if s.dude.tile in goals:
         return True
@@ -1525,7 +1524,7 @@ def the_pump(actor: Actor) -> bool:
         if not actor._count(PID_JUNK):
             break
         # beside the pump round Harry's notice (a plain walk there crossed his talk hex 14093, live);
-        # a talk he opens is answered by "But I am a ghoul!"
+        # a talk he opens is answered by HARRY.MSG 103
         obs = nav.obstacles(actor.mem, actor.snap().elevation, actor.snap().dude.address)
         past_harry_sneaking(actor, {t for t in geometry.ring(WATRSHD_PUMP, 1) if t not in obs.blocked})
         if actor.in_combat() or dialogue.read(actor.mem).active:
@@ -1549,7 +1548,7 @@ def to_the_cell(actor: Actor) -> bool:
 
 
 def out_past_harry(actor: Actor) -> bool:
-    """Out of the Watershed by its exits, round Harry while sneaking; at Speech 121 (level 6) "But I am a ghoul!"
+    """Out of the Watershed by its exits, round Harry while sneaking; at Speech 121 (level 6) HARRY.MSG 103
     cannot fail if he talks."""
     if actor.snap().screen == "worldmap":
         return True
@@ -1568,12 +1567,12 @@ def out_past_harry(actor: Actor) -> bool:
 # the Overseer's floor (WTRTHIEF: he walks from 16912 east and back, taking a flask by the box 20506; the search
 # is a CH check, 30 %, a failure is his fight: either way WATER_THIEF 2), and the hand-in last (OVER over28 sets CALM_REBELS and
 # WATER_THIEF to 3 unless each is 2).
-LYLE_THIEF = ["hello, lyle. how are you holding up?", "i'll take a look and see what i can do."]  # LYLE.MSG 105, 110
+LYLE_THIEF = ["#105", "#110"]  # LYLE.MSG 105, 110
 THIEF_TALK = [
-    "what are you doing here at this time",
-    "looking for the water thief",
-    "bullet in your head",
-    "[search him]",
+    "#109",
+    "#114",
+    "#124",
+    "#121",
 ]  # WTRTHIEF.MSG 109, 114, 124, 121: the search, do_check(CH): its outcome stands
 THIEF_POST, THIEF_BOX = 16912, 20506  # the footlocker; he turns back at 22728 and holds the flask from 20706 (live)
 PID_WATER_FLASK = 126
@@ -1613,7 +1612,7 @@ def the_water_thief(actor: Actor) -> bool:
 
     Watched live (runs/thief-watch): at 00:00 he appears at 17512, walks to 22728 and back; passing
     20706 (the box 20506 within 4) he takes a Water Flask; about 14 game seconds later he is at 16912 and gone to
-    7000. Searched before the flask: "You find nothing.". So the watch runs at the game's own speed after midnight,
+    7000. Searched before the flask: an empty find. So the watch runs at the game's own speed after midnight,
     and the talk is clicked the moment he holds the flask."""
     if quests.gvar(actor, "WATER_THIEF") >= 2:
         return True
@@ -1735,9 +1734,9 @@ PID_TOOL, PID_RAD_X, PID_RADAWAY, PID_10MM_SMG = 75, 109, 48, 9
 # over). His trade runs at barter mod -20: a Rad-X (cost 300) is 313 caps at Barter 46. The plan: two Rad-X make
 # the Glow rad-free for 24 game hours (resistance 12 + 2 x 50, capped at 100: the Glow plan), four make two windows.
 VANCE_SELL = [
-    "i would like to buy some more stuff.",
-    "who are you?",
-    "good to meet you vance. what do you have to sell?",
+    "#122",
+    "#103",
+    "#109",
 ]
 # VANCE.MSG 122 (Vance06, a later talk: live), 103, 109
 
@@ -1815,9 +1814,9 @@ HOT_SPOTS = {  # HOTSPOT spatials: 20-50 rads for every step inside
 }
 ZAX_TRIES = 4  # deactivation tries (10 game minutes each, +5 h a failure): inside one Rad-X window
 ZAX_RECORDS = (
-    ("research division employees records", "WATER_CHIP_3"),
-    ("power armor. status", "WATER_CHIP_2"),
-    ("fev (force evolutionary virus)", "WATER_CHIP_1"),
+    ("gpwrterm#217", "WATER_CHIP_3"),  # the research records' options (GPWRTERM.MSG under ZAX.INT)
+    ("gpwrterm#218", "WATER_CHIP_2"),
+    ("gpwrterm#219", "WATER_CHIP_1"),
 )
 DISKS = (
     (PID_FEV_DISK, "FEV_DISK"),
@@ -1890,7 +1889,7 @@ def loot_all(tiles: tuple[int, ...]) -> Callable[[Actor], bool]:
 
 
 def key_in_door(actor: Actor, key: int, tile: int) -> bool:
-    """The key used on the lift's door: its field off ("Authorization granted"), as the door script says."""
+    """The key used on the lift's door: its field off (message 106), as the door script says."""
     s = actor.snap()
     door = next(
         (t for t in world.things(actor.mem) if t.tile == tile and t.elevation == s.elevation and "Door" in t.name),
@@ -1904,7 +1903,8 @@ def key_in_door(actor: Actor, key: int, tile: int) -> bool:
     line = actor.mem.glob("disp_start")
 
     def granted() -> bool:
-        return any("authorization granted" in m.lower() for m in state.messages_since(actor.mem, line))
+        said = " ".join(state.messages_since(actor.mem, line))  # message 106 of the field doors' scripts
+        return any(dialogue.holds(said, door, 106) for door in ("glorddor", "globldor", "gloyldor"))
 
     # the key stays in the right hand: the next use of it skips the inventory, and a fight's first attack swaps to
     # the gun by B (seen: the weapon came off and on all the time; an equip and an unequip cost
@@ -1931,39 +1931,41 @@ def at(name: str, elevation: int) -> Callable[[Actor], bool]:
 
 
 def zax_next(actor: Actor, goal: str, d, tries: int, most: int) -> tuple[int | None, int]:
-    """The option to take at this node of Zax's talk for `goal`, and the deactivation tries so far."""
-    reply = (d.reply or "").lower()
+    """The option to take at this node of Zax's talk for `goal`, and the deactivation tries so far. The nodes are
+    known by their reply's message and the options by theirs (ZAX.INT: its own list, and GPWRTERM.MSG for the
+    mainframe's menus)."""
+    reply = (dialogue.list_name(d.reply_list), d.reply_message)
 
-    def pick(*phrases: str) -> int | None:
-        return next((i for i in (dialogue.match(d.options, p) for p in phrases) if i is not None), None)
+    def pick(*items: str) -> int | None:
+        return next((i for i in (dialogue.plan_index(d, p) for p in items) if i is not None), None)
 
     pending = [opt for opt, g in ZAX_RECORDS if not quests.gvar(actor, g)]
     power = quests.gvar(actor, "GLOW_POWER") == 2
     armed = bool(quests.gvar(actor, "WEAPONS_ARMED"))
     robots_left = goal == "robots" and power and not armed and tries < most
-    if "how may i be of assistance" in reply:
+    if reply == ("zax", 102):  # the greeting
         done = (
             (goal == "downloads" and not pending)
             or (goal == "power" and power)
             or (goal == "robots" and not robots_left)
         )
-        return pick("uh, never mind.") if done else pick("grant me access to the mainframe."), tries
-    if "select option" in reply:
+        return pick("zax#108") if done else pick("gpwrterm#200"), tries  # never mind; the mainframe
+    if reply == ("gpwrterm", 206):  # the mainframe's menu
         if goal == "downloads" and pending:
-            return pick("research information"), tries
+            return pick("gpwrterm#209"), tries  # research
         if goal == "power" and not power:
-            return pick("power terminus"), tries
+            return pick("gpwrterm#210"), tries  # power terminus
         if robots_left:
-            return pick("security information"), tries
-        return pick("exit mainframe"), tries
-    if reply.startswith("research:"):
-        return (pick(pending[0]) if pending else pick("terminate program")), tries
-    if reply.startswith("security:"):
-        i = pick("deactivate security robots") if robots_left else None
-        return (i, tries + 1) if i is not None else (pick("terminate program"), tries)
-    if goal == "power" and not power:
-        return pick("power management", "primary power", "reinitialize primary power", "main menu"), tries
-    return pick("download records to pipboy", "main menu", "terminate program", "exit mainframe"), tries
+            return pick("gpwrterm#208"), tries  # security
+        return pick("gpwrterm#204"), tries  # exit the mainframe
+    if reply == ("gpwrterm", 216):  # the research records
+        return (pick(pending[0]) if pending else pick("gpwrterm#205")), tries  # a record; terminate
+    if reply in (("gpwrterm", 212), ("gpwrterm", 213)):  # the security robots' status
+        i = pick("gpwrterm#214") if robots_left else None  # deactivate
+        return (i, tries + 1) if i is not None else (pick("gpwrterm#205"), tries)
+    if goal == "power" and not power:  # power management, primary power, reinitialize it, else the main menu
+        return pick("gpwrterm#101/120", "gpwrterm#105/109/123/127", "gpwrterm#109", "gpwrterm#203"), tries
+    return pick("gpwrterm#229", "gpwrterm#203", "gpwrterm#205", "gpwrterm#204"), tries  # download, menu, end, exit
 
 
 def zax(actor: Actor, goal: str, most: int = ZAX_TRIES) -> None:
@@ -2024,7 +2026,7 @@ def zax_robots(actor: Actor) -> bool:
 
 def the_generator(actor: Actor) -> bool:
     """A Tool on the generator (Repair +10); a failure costs 20 game minutes and is tried again (the game's own
-    retry); "You lack the knowledge" ends it."""
+    retry); the lack-of-skill message ends it."""
     if quests.gvar(actor, "START_POWER") == 2:
         return True
     if not actor._count(PID_TOOL):
@@ -2165,68 +2167,68 @@ IDEALIST_GLOW = [
 # floor. Vree: the disk, Rad-X and her terminal lesson (+15 Science) in one talk. Sophia's and Maxson's histories.
 # Never: Maxson's money lines (thrown out), the supply room (SUPGRD shoot on sight), Steal, Rhombus's quarters.
 TALUS_REQUISITION = [
-    "how do i get better weapons and equipment?",
-    "how can i get some better equipment and weapons?",
-    "thanks, what about some high-tech weapons?",
-    "i really need some better firepower.",
-    "sure. what's the problem?",
-    "i'll check it out.",
-    "okay, bye.",
+    "#104",
+    "#134",
+    "#118",
+    "#109",
+    "#176",
+    "#182",
+    "#193",
 ]  # TALUS.MSG 104/134, 118, 109, 176, 182, 193
 # TALUS.MSG 205, 213: the Laser Pistol (a second Powered Armor, 85 lb, adds nothing worn; the hub2 plan)
-TALUS_REWARD = ["you're welcome.", "laser pistol."]
+TALUS_REWARD = ["#205", "#213"]
 MICHAEL_PICKUP = [
-    "i have been given authorization",
-    "i have something to pick up.",
-    "just give me what i have to pick up",
-    "yes, i have something else to pick up.",
-    "shotgun shells.",  # no energy cells on his list: the dearest box, for trade (225 caps each)
-    ".223 full metal jacket.",  # shells were not on his list live: the next dearest (200)
-    "no, that's it. thanks.",
+    "@146",
+    "@185",
+    "@208",
+    "@169",
+    "@221",  # no energy cells on his list: the dearest box, for trade (225 caps each)
+    "@218",  # shells were not on his list live: the next dearest (200)
+    "@168",
 ]  # MICHAEL.MSG 146, 185, goto48, goto49 passes, 221
 MICHAEL_MOTIVATOR = [
-    "i'm looking for a systolic motivator.",
-    "yes. i was sent up here to get a systolic motivator.",
-    "you don't? ordinance was suppose to send one down yesterday.",
-    "you know michael, you're probably one of the brightest guys",
-    "thank you. bye.",
+    "@240",
+    "@242",
+    "@250",
+    "@254",
+    "@252",
 ]  # MICHAEL.MSG 240, 242, 250 (Speech -10 for a man), 254, 252
 KYLE_PART = [
-    "well, who are you?",
-    "what do you do here?",
-    'what kind of "stuff"?',
-    "how can i get my hands on some power armor?",
-    "where could someone get one of those?",
-    "so if i brought you a systolic motivator",
-    "that's fair. i'll be back.",
+    "#104",
+    "#106/139/110",
+    "#115",
+    "#118",
+    "#120",
+    "#124",
+    "#130",
 ]  # KYLE.MSG 104, 139, 115, 118, 120, 124, 130: CALM_REBELS_7 1
-KYLE_INSTALL = ["yes. here it is.", "[more]"]  # KYLE.MSG 164, 300: CALM_REBELS_7 2, Deans Electronics
+KYLE_INSTALL = ["#164", "#300"]  # KYLE.MSG 164, 300: CALM_REBELS_7 2, Deans Electronics
 VREE_ALL = [
-    "i need some technical information.",
-    "what's causing all the mutations?",
-    "why do you say that?",
-    "interesting theory. any proof?",
-    "can i ask something else?",
-    "how can i prevent radiation poisoning?",
-    "can i ask you something else?",
-    "i heard something about holo-discs",
-    "where can i learn the computer skills?",
+    "#112",
+    "#123",
+    "#140",
+    "#145",
+    "#149/187",
+    "#122",
+    "#137",
+    "#121",
+    "#129",
 ]  # VREE.MSG 112, 123, 140, 145 (the disk), 149, 122 (Rad-X), 137, 121, 129 (TERM1)
 SOPHIA_HISTORY = [
-    "i am looking for vree.",
-    "what is it you do as vree's assistant?",
-    "what can you tell me about the brotherhood's history?",
-    "could you tell me about the brotherhood's history.",
-    "i was sent here to ask vree about the history",
-    "well, then who can i talk to about the history",
-    "thank you.",
+    "#304",
+    "#316",
+    "#332",
+    "#366/382",
+    "#330",
+    "#360",
+    "#315/349/369",
 ]  # SOPHIA.MSG 304, 316, 332, 366, 330, 360, 349: Brotherhood History (pid 215)
 MAXSON_HISTORY = [
-    "can i ask you another question?",
-    "i need to ask you some questions.",
-    "can i ask you some questions?",
-    "what can you tell me about the brotherhood's history?",
-    "nevermind.",
+    "#349",
+    "#332",
+    "#335",
+    "#344",
+    "#318/331/336/348",
 ]  # MAXSON.MSG 349/332/335, 344, 348: Maxson's History (pid 216)
 PID_BOS_ARMOR, PID_POWER_ARMOR, PID_MOTIVATOR = 239, 3, 229
 PID_VREES_DISK, PID_SOPHIAS_DISK, PID_MAXSONS_DISK = 194, 215, 216
@@ -2380,7 +2382,7 @@ def the_repair(actor: Actor) -> bool:
             break
         line = actor.mem.glob("disp_start")
 
-        def tried(line: int = line) -> bool:  # a hover's "You see: ..." is not an answer
+        def tried(line: int = line) -> bool:  # a hover's look-at line is not an answer
             said = [m for m in state.messages_since(actor.mem, line) if not m.startswith("You see")]
             return quests.gvar(actor, "CALM_REBELS_7") >= 3 or bool(said)
 
@@ -2392,7 +2394,7 @@ def the_repair(actor: Actor) -> bool:
             None,
         )  # fmt: skip
         on = frozenset({parts}) if parts else frozenset()  # the parts lie on a Table on the same hex
-        # the Repair skill, not the Tool: the Tool used on the parts answered "That does nothing." ten times, the
+        # the Repair skill, not the Tool: the Tool used on the parts answered with the no-effect message ten times, the
         # skill repaired them at once (Repair 81, live)
         actor.use_skill_on("repair", ARMOR_PARTS, tried, targets=on)
         actor.log.emit(
@@ -2493,71 +2495,71 @@ IDEALIST_BOS = [
 # Butch, Rutger), then Talus's reward. Every Hub critter is team 1 and a hit on a citizen sets ENEMY_HUB: each fight
 # names its foes (only=). The Powered Armor (DT 12) stops every gun in the Hub but crits; Kane (four punches a turn)
 # goes before Decker in the raid.
-RUTGER_WORK = ["looking for work.", "about the job that was posted."]  # RUTGER.MSG 296/307, 295/306
+RUTGER_WORK = ["#104/296/307", "#103/295/306"]  # RUTGER.MSG 296/307, 295/306
 BUTCH_JOB = [
-    "i need to ask you a few questions.",
-    "what job?",
-    "so what do you want me to do?",
-    "any clues on who's doing this?",
-    "well, i do. what is it?",
-    "how do i find out about the death claw?",
-    "i'll go check it out.",
+    "#107",
+    "#111",
+    "#134/164",
+    "#137",
+    "#144",
+    "#149",
+    "#152/156",
 ]  # BUTCH.MSG 107, 111, 134, 137, 144, 149, 152: map_var 41 1, HUB_FILLER_29 1
 BETH_DEATHCLAW = [
-    "can i ask you some questions?",
-    "what do you know about the deathclaw?",
-    "what exactly is a deathclaw?",
-    "wow! do you know where it is?",
-    "thanks. i'll check it out. bye.",
+    "#102",
+    "#110",
+    "#209",
+    "#244",
+    "#255/260",
 ]  # HBETH.MSG 102, 110, 209, 244, 260: HUB_FILLER_29 2
 BETH_DECKER = [
-    "can i ask you some questions?",
-    "what can you tell me about decker?",
-    "yeah, he deserved it",
+    "#102",
+    "#112",
+    "#333",
 ]  # 6 Stimpaks
 HAROLD_DEATHCLAW = [
-    "i need info on the deathclaw",
-    "gonna kill it.",
-    "any weaknesses?",
-    "what kind of problem?",
-    "great, thanks.",
-    "could be.",
-    "hi.",
+    "#225",
+    "#231",
+    "#234",
+    "#236",
+    "#238",
+    "#240",
+    "#220",
 ]  # HAROLD.MSG 225, 231, 234, 236, 238, 240, 220: HUB_FILLER_29 3
 SLAPPY_LAIR = [
-    "uh, i talked with harold.",
-    "come on, what do you know about the deathclaw?",
-    "you can take me to the deathclaw?",
-    "just shut up and take me there.",
+    "#109",
+    "#117",
+    "#126",
+    "#129",
 ]  # SLAPPY.MSG 109, 117, 126, 129: +800 XP, DETHCLAW
-MUTANT = ["who are you?", "where did you come from?", "who sent you?"]  # DCMUTANT.MSG 105, 107, 109: MISSING_CARAVAN 2
+MUTANT = ["#105", "#107", "#109"]  # DCMUTANT.MSG 105, 107, 109: MISSING_CARAVAN 2
 BUTCH_REPORT = [
-    "it was mutants.",
-    "been there, saw that, killed it.",
-    "i don't know yet. but they have an outpost in the mountains.",
+    "#264",
+    "#222/250",
+    "#225",
 ]  # BUTCH.MSG 264, 222, 225: map_var 41 3
 RUTGER_REWARD = [
-    "i found out what happened to the missing caravans.",
-    "actually, it was a group of these huge mutants.",
-    "well, check this holodisk out.",
+    "#241",
+    "#197/221/226",
+    "#214/231",
 ]  # RUTGER.MSG 241, 197, 214: 1000 XP, 800 caps, karma +5
 KANE_TO_DECKER = [
-    "i need to talk to decker.",
-    "a job.",
-    "loxley sent me.",
-    "me? work for those thieves, never.",
-    "i'm sorry, i misunderstood you.",
-    "i'm sorry, i just wanted a job.",
+    "#146",
+    "#215/222/331/341/343",
+    "#228",
+    "#240",
+    "#313",
+    "#331",
 ]  # KANE.MSG 146, 215, 228, 240, 313 (Speech 0), 331
-DECKER_REFUSE = ["i am ", "that's why i'm here.", "and the job?", "i can't do that!"]  # DECKER.MSG 104, 108, 111, 115
+DECKER_REFUSE = ["@104", "#108", "#111", "#115"]  # DECKER.MSG 104, 108, 111, 115
 JUSTIN_REPORT = [
-    "i have a crime to report!",
-    "decker tried to hire me to kill some merchant",
-    "yes, he did.",
-    "it'll be a pleasure.",
-    "i'm ready.",
+    "#161",
+    "#105",
+    "#171",
+    "#117",
+    "#124",
 ]  # JUSTIN.MSG 161, 105, 171, 117, 124: +300 caps, the raid
-JONATHAN = ["you're welcome. bye."]  # MISSBRO.MSG 106: FIND_LOST_INITIATE 2 as the talk opens
+JONATHAN = ["#106"]  # MISSBRO.MSG 106: FIND_LOST_INITIATE 2 as the talk opens
 PID_MUTANT_DISK = 196
 CAPTORS_DOOR, JONATHANS_DOOR = 19528, 20140  # HUBOLDTN e0: WOODDOOR (open), DOOR.INT (locked)
 HUB2_STIMPAKS = 20  # carried before the captors and the Deathclaw (Vance: 105 caps each)
@@ -2799,7 +2801,7 @@ IDEALIST_HUB2 = [
         far_go("hbeth", BETH_DEATHCLAW, lambda a: quests.gvar(a, "HUB_FILLER_29") >= 2),
         checkpoint=True,
     ),
-    # Beth's six stimpaks once (Beth67); her later talks only say "I already told you" (live): one try, done either way
+    # Beth's six stimpaks once (Beth67); her later talks only repeat themselves (live): one try, done either way
     Step("Beth: Decker's death", lambda a: far_go("hbeth", BETH_DECKER, lambda _a: False)(a) or True, tries=1),
     Step("Old Town", lambda a: hub_map(a, "HUBOLDTN"), checkpoint=True),
     Step("stimpaks from Vance", stimpaks_to(HUB2_STIMPAKS), optional=True),
