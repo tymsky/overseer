@@ -9,7 +9,7 @@ import heapq
 import time
 from dataclasses import dataclass
 
-from f1 import geometry, knowledge, state, traps, win32
+from f1 import doors, geometry, state, traps, win32
 from f1.engine_map import Obj
 
 OBJECT_HIDDEN, OBJECT_NO_BLOCK = 0x01, 0x10
@@ -33,8 +33,10 @@ class Obstacles:
 OBJECT_MULTIHEX = 0x800  # object_types.h
 
 
-def obstacles(mem, elevation: int, dude_address: int) -> Obstacles:
-    blocked, exits, doors, locked, critters = set(), {}, set(), set(), set()
+def obstacles(mem, elevation: int, dude_address: int, walls: frozenset[int] = frozenset()) -> Obstacles:
+    """What blocks on ELEVATION. A door is a door by its prototype's scenery type (f1.doors); WALLS (f1.doors' walled
+    doors) block as walls do: no path is planned through them to be opened on the way."""
+    blocked, exits, shut, locked, critters = set(), {}, set(), set(), set()
     for addr in state.objects(mem):
         raw = mem.read(addr, Obj.SIZE)
 
@@ -58,18 +60,12 @@ def obstacles(mem, elevation: int, dude_address: int) -> Obstacles:
             blocked.update(body)  # (radscorpions: flags 0x20002800)
             if kind == 1:
                 critters.update(body)
-            if kind == 2 and is_door(pid):  # an open door has OBJECT_NO_BLOCK (measured), a closed one blocks
-                doors.add(tile)
+            if kind == 2 and doors.is_door(pid) and tile not in walls:  # an open door has OBJECT_NO_BLOCK
+                shut.add(tile)
                 if i32(Obj.DOOR_OPEN_FLAGS) & Obj.DOOR_LOCKED:
                     locked.add(tile)
-    return Obstacles(frozenset(blocked), exits, frozenset(doors), frozenset(locked), frozenset(critters))
-
-
-def is_door(pid: int) -> bool:
-    """A door by its prototype's kind (Shady Sands' curtains are doors), else by name ("Elevator Door" too: Vault 12's
-    open like any door, measured)."""
-    p = knowledge.proto(pid) or {}
-    return p.get("kind") == "door" or "Door" in p.get("name", "")
+    blocked |= walls
+    return Obstacles(frozenset(blocked), exits, frozenset(shut), frozenset(locked), frozenset(critters))
 
 
 def astar(start: int, goals: set[int], blocked: frozenset[int], limit: int = 60000) -> list[int] | None:
@@ -144,7 +140,11 @@ def _door_object(actor, tile: int, elevation: int) -> int | None:
     from f1 import world
 
     return next(
-        (t.address for t in world.things(actor.mem) if t.tile == tile and t.elevation == elevation and is_door(t.pid)),
+        (
+            t.address
+            for t in world.things(actor.mem)
+            if t.tile == tile and t.elevation == elevation and doors.is_door(t.pid)
+        ),
         None,
     )
 
@@ -270,9 +270,19 @@ def go_to(
     `avoid` holds hexes the path must not cross (a radiation hot spot and a margin round it): planned around like
     walls, and walked in short steps, as the engine finds its own way between two points of ours. The armed traps'
     areas (f1.traps) are added on every step and kept off the same way, each leg short enough that no shortest way
-    between its ends enters them; only when no way keeps off them is one taken through (logged). Logged as an
-    action with the length of its first plan, which a review of the run can hold the walked hexes against."""
+    between its ends enters them; only when no way keeps off them is one taken through (logged). The doors f1.doors
+    walls on this map and elevation are walls of every plan (given back first when the game's state frees them). A
+    walk to exit grids keeps off the grids that lead elsewhere (f1.ways.exit_walls: a walk to one map's band must not
+    cross another's and leave by it). Logged as an action with the length of its first plan, which a review of the
+    run can hold the walked hexes against."""
+    from f1 import ways
+
     s = actor.snap()
+    for w in doors.WALLS.give_back(actor.mem, s.map_name):
+        actor.log.emit("milestone", what="a door given back", tile=w.tile, by=w.by)
+    exits = obstacles(actor.mem, s.elevation, s.dude.address).exits if s.dude else {}
+    if goals and set(goals) <= set(exits):
+        avoid = avoid | (ways.exit_walls(exits, {exits[g][0] for g in goals}) - set(goals))
     actor.log.emit(
         "action_start", action="go_to", **{"from": s.dude.tile if s.dude else None}, goals=len(goals),
         max_steps=max_steps,
@@ -309,7 +319,8 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
             continue
         if s.dude.tile in goals:
             return True, "arrived"
-        obs = obstacles(actor.mem, s.elevation, s.dude.address)
+        walls = doors.WALLS.on(s.map_name, s.elevation)
+        obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
         avoid = caller_avoid | (trap_tiles(actor, s.elevation) - goals - {s.dude.tile})
         if (
             avoid != caller_avoid
@@ -324,7 +335,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         if path is None:  # once right after saving it failed and a second later it did not: look again
             time.sleep(1.0)
             s = actor.snap()
-            obs = obstacles(actor.mem, s.elevation, s.dude.address)
+            obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
             path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
         # someone stands in the only way (after a reload, again and again: the same save, the same place; the rope in
         # Shady Sands East failed four tries, a full run at Full HD, and 75 s later the way was free): they
@@ -337,7 +348,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
                 break
             time.sleep(2.0)
             s = actor.snap()
-            obs = obstacles(actor.mem, s.elevation, s.dude.address)
+            obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
             path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
             if path is not None:
                 break
@@ -349,6 +360,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         if door == 1:  # a closed door right ahead: open it (its default action), then look again
             if not open_door(actor, path[1]):
                 refused.add(path[1])  # locked (the Brotherhood's 16318, live): plan round it; fail only without a way
+                doors.WALLS.wall(s.map_name, s.elevation, path[1], "did not open")  # for later walks: till unlocked
                 if (
                     astar(actor.snap().dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
                     is None

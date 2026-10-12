@@ -227,6 +227,10 @@ def plan(start: tuple[str, int], goal: tuple[str, int] | str, limit: int = 12) -
     return None
 
 
+def _dest(index: int) -> str:
+    return _name(knowledge.map_name(index)) if index >= 0 else knowledge.map_name(index)
+
+
 def exit_walls(exits: dict[int, tuple[int, int, int]], to: set[int]) -> frozenset[int]:
     """The exit grids that lead elsewhere than the maps TO (map indices): walls for a walk to TO's grids."""
     return frozenset(t for t, (m, _t, _e) in exits.items() if m not in to)
@@ -294,7 +298,7 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
         door = shut[0]
         before = path[path.index(door) - 1] if path.index(door) > 0 else s.dude.tile
         if before != s.dude.tile:
-            nav.go_to(actor, {before}, max_steps=60, fight=True, avoid=walls.on(s.map_name, s.elevation))
+            nav.go_to(actor, {before}, max_steps=60, fight=True, avoid=_keep_off(walls, s))
         ok = nav.open_door(actor, door)
         st = doors.at(actor.mem, door, s.elevation)
         row = {"tile": door, "clicked": ok, **(st.to_dict() if st else {"missing": True})}
@@ -306,6 +310,12 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
     return Result(False, "too many doors", {"opened": opened, "walled": walled})
 
 
+def _keep_off(walls: doors.Walls, s) -> frozenset[int]:
+    """The walled doors a walk must be told of: none for the session's walls (nav.go_to blocks those itself, as
+    walls: the player's path never crosses a closed door, so they need no short legs round them)."""
+    return frozenset() if walls is doors.WALLS else walls.on(s.map_name, s.elevation)
+
+
 def walk(actor, goal: int, walls: doors.Walls | None = None, avoid: frozenset[int] = frozenset()) -> Result:
     """To GOAL with the doors on the way opened first; the walled doors and AVOID kept off."""
     from f1 import nav
@@ -315,7 +325,7 @@ def walk(actor, goal: int, walls: doors.Walls | None = None, avoid: frozenset[in
     if not r.ok:
         return r
     s = actor.snap()
-    keep_off = walls.on(s.map_name, s.elevation) | avoid
+    keep_off = _keep_off(walls, s) | avoid
     reached, why = nav.go_to(actor, {goal}, max_steps=120, fight=True, avoid=keep_off)
     return Result(reached, why, {**r.detail, **where(actor)})
 
@@ -340,14 +350,15 @@ def take(actor, way: Way, walls: doors.Walls | None = None, timeout_s: float = 2
         from f1 import nav
 
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-        mine = {t for t in way.tiles if t in obs.exits} or set(way.tiles)
+        # every grid here to the way's destination (the nearest one taken), not only the planned band
+        mine = {t for t, (m, _t, e) in obs.exits.items()
+                if (m < 0 if way.out else (_dest(m), e) == (way.to_map, way.to_elevation))}  # fmt: skip
+        mine = mine or {t for t in way.tiles if t in obs.exits} or set(way.tiles)
         others = frozenset(t for t in obs.exits if t not in mine)
         r = open_doors(actor, min(mine, key=lambda t: geometry.distance(t, s.dude.tile)), walls)
         if not r.ok:
             return _end(actor, False, r.why, way, {"doors": r.detail})
-        _reached, why = nav.go_to(
-            actor, mine, max_steps=150, fight=True, avoid=others | walls.on(s.map_name, s.elevation)
-        )
+        _reached, why = nav.go_to(actor, mine, max_steps=150, fight=True, avoid=others | _keep_off(walls, s))
         ok = win32.wait_for(lambda: arrived(actor, way), timeout_s, 0.25)
         time.sleep(1.0)
         return _end(actor, ok, why, way, {"doors": r.detail})

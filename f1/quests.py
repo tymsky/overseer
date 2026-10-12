@@ -3,7 +3,8 @@
 python -m f1.quests hunt [KIND]     clear a map of a wild kind (default Radscorpion), saving after kills and
                                     loading the last save when the player dies or runs out of health
 python -m f1.quests leave           walk out of this map to the world map
-python -m f1.quests exit MAP        walk to this level's exit grids that lead to MAP (e.g. HALLDED)
+python -m f1.quests exit MAP        go to the map MAP by the planned ways (exit grids, stairs, elevators; e.g. HALLDED)
+python -m f1.quests ride KEY        ride this level's elevator to the level on KEY ('1', '2', 'G')
 python -m f1.quests visit TOWN [N]  travel to a town and enter its entrance N (TownHotSpots order, default 0)
 python -m f1.quests go TOWN [N]     the same, loading slot 1 and trying again when the Agent dies on the way
 python -m f1.quests talk NAME "phrase|phrase"   walk up to a critter by name and follow a dialogue plan
@@ -313,48 +314,24 @@ def goto_map(actor: Actor, target: str) -> bool:
 
 
 def leave_map(actor: Actor, max_steps: int = 120, hops: int = 4) -> bool:
-    """Walk out to the world map: to the nearest exit grid that leads out (map -1: the world map, -2: the town
-    map); when this level has none, by the elevator to the first level, or through an exit to another map of the
-    place (Vault 13's levels -> its cave -> out). True once the world map (or the town map on it) shows."""
-    for _ in range(hops):
-        s = actor.snap()
-        if s.screen == "worldmap":
-            return True
-        obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-        out = {t for t, (to_map, _tile, _elev) in obs.exits.items() if to_map < 0}  # -1 world map, -2 town map
-        other = {t for t, (to_map, _tile, _elev) in obs.exits.items() if to_map >= 0}
-        actor.log.emit("action_start", action="leave_map", exits=len(out), other=len(other), map=s.map_name)
-        if not out and not other and s.elevation > 0 and nearest_thing(actor, ("Vault Elevator", "Elevator")):
-            use_elevator(actor, "1")
-            continue
-        if not out and other:  # toward the map nearest a way out (the Hub's downtown: its entrance, not the heights)
-            by_map = {t: hops_out(knowledge.map_name(obs.exits[t][0]).removesuffix(".MAP")) for t in other}
-            best = min(by_map.values())
-            other = {t for t, n in by_map.items() if n == best}
-        goals = out or other
-        if not goals:
-            return actor._end(False, "no way out of this level", {}, "leave_map").ok
-        nav.go_to(actor, goals, max_steps=max_steps, fight=True)
-        if win32.wait_for(lambda: actor.snap().screen == "worldmap", 15 if out else 3, 0.25):
-            return actor._end(True, "on the world map", {}, "leave_map").ok
-        win32.wait_for(lambda: actor.snap().screen == "map", 20, 0.25)  # another map of the place: go on
-        time.sleep(1.0)
-    return actor._end(False, "not on the world map", {}, "leave_map").ok
+    """Out to the world map (or the town map on it) by the fewest ways the map files hold (f1.ways: exit grids,
+    stairs, ladders, elevators; Vault 13's levels -> its cave -> out), each way's doors opened and its arrival read
+    back. True once the world map shows. (MAX_STEPS and HOPS are kept for the callers; ways.go plans them.)"""
+    return _go(actor, "WORLD MAP", "leave_map")
 
 
 def take_exit(actor: Actor, map_file: str, max_steps: int = 150) -> bool:
-    """Walk to the exit grids on this level that lead to `map_file` (e.g. "HALLDED"); True once on that map."""
-    s = actor.snap()
-    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-    goals = {t for t, (to_map, _t, _e) in obs.exits.items() if map_file.upper() in knowledge.map_name(to_map)}
-    actor.log.emit("action_start", action="take_exit", to=map_file, exits=len(goals), map=s.map_name)
-    if not goals:
-        return actor._end(False, f"no exit to {map_file} on this level", {}, "take_exit").ok
-    nav.go_to(actor, goals, max_steps=max_steps, fight=True)
-    there = win32.wait_for(lambda: map_file.upper() in actor.snap().map_name, 20, 0.25)
-    time.sleep(1.0)
-    s = actor.snap()
-    return actor._end(there, s.map_name, {"elevation": s.elevation, "tile": s.dude.tile}, "take_exit").ok
+    """To the map MAP_FILE (e.g. "HALLDED") by the planned ways (f1.ways.go): its exit grids on this level, or
+    stairs and elevators first; True once on that map (read back from memory)."""
+    return _go(actor, map_file.upper().split(".")[0], "take_exit")
+
+
+def _go(actor: Actor, goal, action: str) -> bool:
+    from f1 import ways
+
+    actor.log.emit("action_start", action=action, goal=goal if isinstance(goal, str) else list(goal))
+    r = ways.go(actor, goal)
+    return actor._end(r.ok, r.why, {"ways": len(r.detail.get("ways", ())), **ways.where(actor)}, action).ok
 
 
 def close_dialogue(actor: Actor, nodes: int = 4) -> bool:
@@ -609,14 +586,20 @@ def ride_from(actor: Actor, tile: int, key: str, avoid: frozenset[int] = frozens
 
 
 def use_elevator(actor: Actor, key: str) -> bool:
-    """Ride the elevator on this elevation to the level on `key` (elevator.c keytable: '1', '2', '3'). Measured in
-    Vault 13 and Vault 12: the panel opens when the player steps onto the cab's floor, the tile behind the elevator
-    door (door tile - 200; the arrival tile in front is door + 200). So: the nearest elevator door, then ride_cab."""
-    door = nearest_thing(actor, ("Elevator Door",))
-    if door is None:
+    """Ride the elevator on this elevation to the level on KEY (elevator.c keytable: '1', '2', '3'): the level is
+    the exe's elevator table's (f1.ways), reached by ways.go, the doors on the way to the car opened first."""
+    from f1 import ways
+
+    s = actor.snap()
+    here = ways._name(s.map_name)
+    try:
+        rides = [w for w in ways.ways_of(here) if w.kind == "elevator" and w.elevation == s.elevation and w.key == key]
+    except (KeyError, ValueError):
+        rides = []
+    if not rides:
         actor.log.emit("action_start", action="use_elevator", key=key)
-        return actor._end(False, "no elevator door here", {}, "use_elevator").ok
-    return ride_cab(actor, door.tile, key)
+        return actor._end(False, f"no elevator here with a key {key}", {}, "use_elevator").ok
+    return _go(actor, (rides[0].to_map, rides[0].to_elevation), "use_elevator")
 
 
 def loot_the_dead(actor: Actor, names: tuple[str, ...] = (), max_bodies: int = 8) -> int:
@@ -730,7 +713,7 @@ def talk_by_nodes(actor: Actor, name: str, plan, entry: str = "", max_legs: int 
 
 
 def main(argv: list[str]) -> int:
-    commands = {"hunt", "leave", "visit", "go", "talk", "exit"}
+    commands = {"hunt", "leave", "visit", "go", "talk", "exit", "ride"}
     if (
         argv[:1] == []
         or argv[0] not in commands
@@ -756,6 +739,11 @@ def _command(cmd: str, argv: list[str], run: Path) -> int:
         if cmd == "exit" and len(argv) == 2:
             ok = take_exit(actor, argv[1])
             print(actor.snap().map_name if ok else "not there")
+            return 0 if ok else 1
+        if cmd == "ride" and len(argv) == 2:
+            ok = use_elevator(actor, argv[1])
+            s = actor.snap()
+            print(f"{s.map_name} elevation {s.elevation}" if ok else "not there")
             return 0 if ok else 1
         if cmd == "leave":
             ok = leave_map(actor)
