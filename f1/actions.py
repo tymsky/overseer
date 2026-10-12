@@ -22,7 +22,6 @@ from f1 import (
     geometry,
     hit,
     inputs,
-    instance,
     knowledge,
     lof,
     nav,
@@ -96,7 +95,10 @@ GOOD_SHOT = 50  # percent: below it a gun closes in on a foe that has no gun (f1
 HOPELESS_SHOT = 20  # percent: below it, and no way closer this turn, the round is not spent
 LONG_SHOT = 5  # percent: after STALL_TURNS turns with nothing done a shot this poor is taken all the same
 STALL_TURNS = 2  # turns without a shot, a step or a heal before the fight takes long shots, then steps back
-AMBIENT = ("you have received a", "dose of radiation")  # lines of the place, not a use's answer (the Glow)
+AMBIENT = (("MISC", 1007),)  # lines of the place, not a use's answer: the Glow's radiation doses (MISC.MSG)
+PICKUP_TOO_HEAVY = ("PROTO", 905)  # a pick-up refused at the carry weight (PROTO.MSG)
+LOOT_TOO_HEAVY = ("INVENTRY", 25)  # an item of a loot screen refused at the carry weight (INVENTRY.MSG)
+AIM_BLOCKED = ("COMBAT", 104)  # a shot whose line of fire is blocked (COMBAT.MSG)
 # round a hex's centre, nearest first (from the top row, a target low beside its hex came after most of the 121 points)
 AIM_GRID = tuple(
     sorted(
@@ -197,11 +199,7 @@ def interleave(a: list[str], b: list[str]) -> list[str]:
     return [k for _, _, k in sorted(keyed)]
 
 
-# The save screen's boxes by shape (flags, width, height), measured live; their place moves with the resolution.
-OVERWRITE_BOX = (0x14, 302, 127)  # "Save game already exists, overwrite?"
-DESCRIPTION_BOX = (0x14, 290, 85)
-
-
+MESSAGE_BOX = (0x14, 302, 127)  # the engine's dialog_out box: (flags, width, height), measured live (a refused rest)
 ITEM_MENU_USE, ITEM_MENU_DROP = 1, 2
 ITEM_MENU_DROP_UNUSABLE = 1  # an item with no Use (a weapon, ammunition, armour): Look, Drop, ...  # entries of an item's action menu below Look (inven_action_cursor act_use)
 
@@ -248,12 +246,12 @@ class Actor:
         inputs.ready(self.pid, self.hwnd, self.guard, 120, session.SessionError, OwnerActive)
 
     def point(self, x: int, y: int) -> bool:
-        """Put the cursor on game-screen pixel (x, y) and confirm it with the engine's own mouse_x/y."""
+        """Put the cursor on game-screen pixel (x, y) and confirm it with the engine's own cursor (inputs.engine_cursor)."""
         self._front()
         r = win32.client_rect(self.hwnd)
         with inputs.acting(self.guard):
             inputs.set_cursor(r.left + x, r.top + y)
-        return win32.wait_for(lambda: (self.mem.glob("mouse_x"), self.mem.glob("mouse_y")) == (x, y), 1.0, 0.02)
+        return win32.wait_for(lambda: inputs.engine_cursor(self.mem) == (x, y), 1.0, 0.02)
 
     def click(self, right: bool = False) -> None:
         self._front()
@@ -690,8 +688,8 @@ class Actor:
         return seen == tile
 
     def line_blocked(self, target: int) -> bool | None:
-        """f1.lof: a shot from the player at `target` is blocked by something that is no critter ("Your aim is
-        blocked."); None when the map could not be read."""
+        """f1.lof: a shot from the player at `target` is blocked by something that is no critter (the game's
+        AIM_BLOCKED); None when the map could not be read."""
         snap = self.scene()
         obj = snap.find(target) if snap else None
         if obj is None or snap.dude is None:
@@ -703,8 +701,9 @@ class Actor:
 
     def pick_up(self, tile: int, pid: int, timeout_s: float = 25.0) -> Outcome:
         """Pick up the item `pid` lying on `tile`, or take everything from the container there (the loot screen:
-        Shift+A takes all, Escape closes it). Confirmed by the item's count going up."""
-        from f1 import world
+        Shift+A takes all, Escape closes it). Confirmed by the item's count going up. Weighed first (f1.loot
+        weigh_object): an item that would not fit, with no room to be made, is refused before any click."""
+        from f1 import loot, world
 
         before = self._count(pid)
         self.log.emit("action_start", action="pick_up", pid=pid, tile=tile, count=before)
@@ -713,10 +712,12 @@ class Actor:
         s = self.snap()
         items = frozenset(t.address for t in world.things(self.mem) if t.tile == tile and t.pid == pid)
         items = frozenset(a for a in items if s.elevation == self.mem.i32(a + Obj.ELEVATION))
+        if items and not loot.weigh_object(self, min(items), pid):  # before the click: room made, or refused
+            return self._end(False, "too heavy", {"count": [before, before]}, "pick_up")
         line = self.mem.glob("disp_start")
         # the game's refusal ends it at once: Kyle's Powered Armor (85 lb) was clicked for 25 s a try, twice, against
-        # "You cannot pick up that item. You are at your maximum weight capacity." (the bunker)
-        heavy = lambda: any("maximum weight" in m.lower() for m in state.messages_since(self.mem, line))
+        # the game's refusal (PICKUP_TOO_HEAVY; the bunker)
+        heavy = lambda: any(knowledge.says(m, *PICKUP_TOO_HEAVY) for m in state.messages_since(self.mem, line))
         done = lambda: self._count(pid) > before or self.snap().screen != "map" or heavy()
         if not (items and self.click_object(tile, done, timeout_s, targets=items)) and not heavy():
             self.click_object(tile, done, timeout_s)
@@ -737,8 +738,8 @@ class Actor:
         left of its hex, and the Agent's own sprite over it wins the click, so it is clicked from a few hexes away.
         The 1.1 exe has no take-all key (CE's Shift+A did nothing live): each item is dragged from the other side's
         list (the window's x 424, first slot) to the player's (x 46); a stack asks how many. Confirmed by the other
-        side's inventory emptying."""
-        from f1 import knowledge, world
+        side's inventory emptying. Weighed first (f1.loot weigh_object): refused before any step when it would not fit."""
+        from f1 import knowledge, loot, world
 
         # on the Agent's own floor: GLOW1 has a Locker on 12925 on two floors, and the other floor's count (1 item,
         # unchanged) made a loot of this one "nothing taken" after 62 s
@@ -764,6 +765,8 @@ class Actor:
         self.log.emit("action_start", action="loot", tile=tile, items=before)
         if before <= 0:  # nothing inside: the Glow's empty lockers took 30 s each of clicks for no loot screen
             return self._end(False, "empty", {"items": [0, 0]}, "loot")
+        if not loot.weigh_object(self, body.address, body.pid):  # the whole inventory, before any step or click
+            return self._end(False, "too heavy", {"items": before}, "loot")
         opened = lambda: self._loot_window() is not None
         aims, targets = LOOT_AIMS, frozenset()
         if isinstance(body, state.Critter):
@@ -820,10 +823,10 @@ class Actor:
             return self._end(False, "no loot screen", {"items": before}, "loot")
         ox, oy = origin
         line = self.mem.glob("disp_start")
-        heavy = lambda: any("maximum weight" in m.lower() for m in state.messages_since(self.mem, line))
+        heavy = lambda: any(knowledge.says(m, *LOOT_TOO_HEAVY) for m in state.messages_since(self.mem, line))
         for _ in range(before + 2):
             left = self.mem.i32(body.address + 0x2C)
-            if left <= 0 or heavy():  # "You cannot pick that up. You are at your maximum weight capacity." (the Glow)
+            if left <= 0 or heavy():  # the game refused an item at the carry weight (LOOT_TOO_HEAVY; the Glow)
                 break
             arr = self.mem.u32(body.address + 0x34)
             quantity = self.mem.i32(arr + 4)
@@ -1093,7 +1096,7 @@ class Actor:
 
         def said() -> bool:  # a new line that is not the place's own (the Glow's doses came in the rope's wait)
             new = [m for m in state.messages(self.mem, 3) if m not in before]
-            return any(not any(a in m.lower() for a in AMBIENT) for m in new)
+            return any(not any(knowledge.says(m, *a) for a in AMBIENT) for m in new)
 
         offsets = list(aims or ((0, -6), (0, 0), (0, -12), (5, -4), (-5, -4), (0, -20)))
         if targets:  # a point on the target itself, found in arrow mode, then the use cursor clicks there
@@ -1102,7 +1105,7 @@ class Actor:
                 offsets = [(spot[0] - cx, spot[1] - cy)] * 3
             detail = detail | {"aimed": spot is not None}
             time.sleep(LOOK_SETTLE_S)
-            before = state.messages(self.mem, 3)  # the rests' looks ("The door is locked.") are not the result
+            before = state.messages(self.mem, 3)  # the rests' looks (a door's locked line) are not the result
         for dx, dy in offsets:
             if not arm():
                 return self._end(False, "no use cursor", detail, action)
@@ -1270,8 +1273,9 @@ class Actor:
 
     def rest(self, how: str = "until morning", timeout_s: float = 90) -> Outcome:
         """Pass time with the Pip-Boy's alarm clock (pipboy.c): P, the clock button (code 504), then the rest line
-        (codes from 510: 510 + the duration's index), wait until the game time stops moving, close. Refused near
-        enemies ("You cannot rest at this location!")."""
+        (codes from 510: 510 + the duration's index), wait until the game time stops moving, close. Where the game
+        allows no rest (near enemies: V13ENT's cave, a worker and the instance alike) the clock's button answers with
+        a message box (MESSAGE_BOX) instead of the rest lines: "refused here", told apart from a button not found."""
         t0 = self.snap().game_time
         self.log.emit("action_start", action="rest", how=how, game_time=t0)
         if self.in_combat():  # the Pip-Boy does not open in combat; its refusal box stayed up in the caves (16:3x)
@@ -1288,14 +1292,16 @@ class Actor:
             return self._end(False, "no Pip-Boy", {"screen": self.snap().screen}, "rest")
         for code in (504, 510 + REST[how]):
             # its buttons are there once the screen is drawn (the clock's rest lines after the clock's button)
-            win32.wait_for(lambda code=code: ui.find(self.mem, self.mem.glob("pip_win"), code) is not None, 1.5, 0.05)
+            there = lambda code=code: ui.find(self.mem, self.mem.glob("pip_win"), code) is not None
+            win32.wait_for(lambda there=there: there() or self._box_up(), 1.5, 0.05)
             b = ui.find(self.mem, self.mem.glob("pip_win"), code)
             if b is None:
+                why = "refused here" if self._box_up() else f"no button {code}"
                 for _ in range(3):  # a refusal's message box takes the first Escape, the Pip-Boy the next (live)
                     session.press("esc")
                     if win32.wait_for(lambda: self.snap().screen == "map", 1.5, 0.1):
                         break
-                return self._end(False, f"no button {code}", {}, "rest")
+                return self._end(False, why, {"game_time": self.snap().game_time}, "rest")
             session.click(*b.center)
         time.sleep(0.3)
         last, still = self.snap().game_time, 0
@@ -1316,6 +1322,11 @@ class Actor:
         s = self.snap()
         hours = (s.game_time - t0) / 36000
         return self._end(s.game_time > t0, f"rested {hours:.1f} h", {"game_time": s.game_time, "hp": s.dude.hp}, "rest")
+
+    def _box_up(self) -> bool:
+        """The engine's message box (dialog_out) is the topmost window."""
+        windows = state.live_windows(self.mem)
+        return bool(windows) and (windows[-1][1] & 0xFF, *windows[-1][4:]) == MESSAGE_BOX
 
     # --- saving and loading -------------------------------------------------------------------------------------
 
@@ -1359,44 +1370,24 @@ class Actor:
         return self.snap().screen == "map"
 
     def quicksave(self, slot: int = 1, description: str = "agent") -> Outcome:
-        """F6. The first time in a session the game asks for a slot and a description; later F6s save straight away."""
-        save = instance.INSTANCE_DIR / "DATA" / "SAVEGAME" / f"SLOT{slot:02d}" / "SAVE.DAT"
-        before = save.stat().st_mtime if save.exists() else 0.0
+        """Save into `slot` through the game's own save screen (f1.saves.save: F4, the slot cursor put on the slot and
+        read back, the overwrite and description boxes, SAVE.DAT read back), in the folder of the copy being driven
+        (session.game_dir). F6, the quick save, saved to whatever slot its cursor held and into the instance's
+        folder only: on a worker it failed."""
+        from f1 import saves
+
         self.to_map()
         s = self.snap()
-        tile = s.dude.tile
+        tile = s.dude.tile if s.dude else None
         self.log.emit("action_start", action="quicksave", slot=slot, tile=tile)
-        if s.screen == "worldmap":  # F6 saves nothing there: two tries cost 69 s after the lair (a full run)
+        if s.screen == "worldmap":  # the save screen does not open there: two tries cost 69 s after the lair
             return self._end(False, "on the world map", {"tile": tile}, "quicksave")
-        written = lambda: save.exists() and save.stat().st_mtime > before
-        for _ in range(
-            3
-        ):  # an F6 during an animation is lost: a full run's checkpoints waited 27 s for such, ten times
-            session.press("f6")
-            if win32.wait_for(lambda: self.snap().screen == "loadsave" or written(), 3, 0.1):
-                break
-        if self.snap().screen == "loadsave":
-            for _ in range(slot - 1):
-                session.press("down")
-            session.press("enter")  # DONE: a used slot asks to overwrite first, then the description box
-            time.sleep(0.8)
-            if self._top_box() == OVERWRITE_BOX:
-                session.press("y")
-                time.sleep(0.8)
-            if self._top_box() != DESCRIPTION_BOX:
-                return self._end(False, f"no description box ({self._top_box()})", {"tile": tile}, "quicksave")
-            for _ in range(30):  # the box keeps the slot's old description
-                session.press("backspace")
-            session.type_text("".join(ch for ch in description if ch.isalnum() or ch == " ")[:28])  # typeable only
-            session.press("enter")
-        saved = win32.wait_for(written, 15, 0.2)
-        back = win32.wait_for(lambda: self.snap().screen == "map", 10, 0.2)
-        return self._end(saved and back, "saved" if saved else "no save file written", {"tile": tile}, "quicksave")
-
-    def _top_box(self) -> tuple[int, int, int]:
-        """The topmost window's shape: (flags, width, height); its place depends on the resolution."""
-        _wid, flags, _x, _y, w, h = state.live_windows(self.mem)[-1]
-        return (flags & 0xFF, w, h)
+        try:
+            rows = saves.save(self.pid, slot, description)
+        except saves.SaveError as e:
+            self.to_map()
+            return self._end(False, str(e), {"tile": tile, "steps": len(e.steps)}, "quicksave")
+        return self._end(True, "saved", {"tile": tile, "steps": len(rows)}, "quicksave")
 
     def item_button(self) -> tuple[int, int]:
         """The active item's button on the interface bar: at 1920x1080 the 800-wide bar sits at (560, 980) and the
@@ -1405,27 +1396,25 @@ class Actor:
         button = next((b for b in ui.buttons(self.mem, bar) if b.codes[5] == ITEM_BUTTON_CODE), None)
         return button.center if button else ITEM_BUTTON
 
-    def quickload(self, expect_tile: int | None = None) -> Outcome:
-        """F7 opens the load screen (it loads nothing by itself: a hunt that waited for the map after F7 alone stood
-        there until a person saw it), Enter loads the slot under its cursor, the one last saved or
-        loaded (slot 1 for the routes; 0.3 s live in the caves). Done when the map is back (at `expect_tile`, if
-        given). Fails fast without the load screen, so the caller can go by the main menu."""
-        self.log.emit("action_start", action="quickload", expect_tile=expect_tile)
-        session.press("f7")
-        if not win32.wait_for(lambda: self.snap().screen == "loadsave", 3, 0.1):
-            return self._end(False, "no load screen", {}, "quickload")
-        session.press("enter")
+    def quickload(self, expect_tile: int | None = None, slot: int = 1) -> Outcome:
+        """Load `slot` through the game's own load screen (f1.saves.load: F5, the slot cursor put on the slot and read
+        back, the save's map and elevation checked), from the copy being driven. Done when the map is back (at
+        `expect_tile`, if given). Fails fast, so the caller can go by the main menu."""
+        from f1 import saves
 
-        def loaded() -> bool:
+        self.log.emit("action_start", action="quickload", slot=slot, expect_tile=expect_tile)
+        try:
+            saves.load(self.pid, slot)
+        except saves.SaveError as e:
             s = self.snap()
-            return s.screen == "map" and s.dude is not None and (expect_tile is None or s.dude.tile == expect_tile)
-
-        ok = win32.wait_for(loaded, 15, 0.25)
-        if ok:
-            watchdog.clear()
+            return self._end(False, str(e), {"tile": s.dude.tile if s.dude else None}, "quickload")
+        watchdog.clear()
         s = self.snap()
         tile = s.dude.tile if s.dude else None
-        return self._end(ok, "loaded" if ok else f"not back on the map ({s.screen})", {"tile": tile}, "quickload")
+        ok = s.screen == "map" and tile is not None and (expect_tile is None or tile == expect_tile)
+        return self._end(
+            ok, "loaded" if ok else f"not at {expect_tile} ({s.screen}, {tile})", {"tile": tile}, "quickload"
+        )
 
     # --- combat --------------------------------------------------------------------------------------------------
 
@@ -1486,6 +1475,7 @@ class Actor:
 
     def attack(self, target: state.Critter) -> Outcome:
         """One attack with the active item on a target (adjacent for fists, in range for a gun); done when over."""
+        self.still_view()  # a following view still gliding after the last step would carry the aim away
         s = self.snap()
         pre = {"target": target.address, "target_tile": target.tile, "target_hp": target.hp, "ap": s.dude.ap}
         self.log.emit("action_start", action="attack", **pre)
@@ -1505,7 +1495,7 @@ class Actor:
                 return self._end(False, "no crosshair after the item button", pre, "attack")
         cx, cy = geometry.tile_center(target.tile, s.camera)
         line = self.mem.glob("disp_start")
-        blocked = lambda: "aim is blocked" in " ".join(state.messages_since(self.mem, line)).lower()
+        blocked = lambda: any(knowledge.says(m, *AIM_BLOCKED) for m in state.messages_since(self.mem, line))
         offsets = list(AIM_OFFSETS)
         point = self.predict(target.address, scene.CRITTER, with_dude=False)  # the crosshair's walk
         if point is not None:
@@ -1675,7 +1665,7 @@ class Actor:
                 if out.ok:
                     acted = rounds
                     continue
-                # no line of fire, or hidden; the game's "Your aim is blocked." says so at once: move now
+                # no line of fire, or hidden; the game's AIM_BLOCKED says so at once: move now
                 missed[in_reach[0].address] = (
                     2 if out.reason == "aim blocked" else missed.get(in_reach[0].address, 0) + 1
                 )
@@ -1747,6 +1737,7 @@ class Actor:
     def combat_move_towards(self, tile: int, max_hexes: int) -> Outcome:
         """In my combat turn: walk up to `max_hexes` along our path towards `tile` (a click in move mode; each hex
         costs 1 AP). Done when the player stands still on the chosen hex or stops early."""
+        self.still_view()  # a following view still gliding after the last step would carry the aim away
         s = self.snap()
         pre = {"from": s.dude.tile, "towards": tile, "max": max_hexes, "ap": s.dude.ap}
         self.log.emit("action_start", action="combat_move", **pre)
@@ -1783,6 +1774,7 @@ class Actor:
     def combat_walk(self, goals: set[int], max_hexes: int) -> Outcome:
         """In my combat turn: up to `max_hexes` along our path onto one of `goals` (an exit grid: standing on it ends
         the combat and leaves the map, CE map_leave_map), to the farthest of those hexes on the view."""
+        self.still_view()  # a following view still gliding after the last step would carry the aim away
         s = self.snap()
         pre = {"from": s.dude.tile, "goals": len(goals), "max": max_hexes, "ap": s.dude.ap}
         self.log.emit("action_start", action="combat_walk", **pre)

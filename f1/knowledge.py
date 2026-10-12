@@ -152,6 +152,22 @@ def proto_name(pid: int) -> str:
     return entry["name"] if entry else f"pid {pid & 0xFFFFFFFF:#010x}"
 
 
+@cache
+def game_message(name: str, number: int) -> tuple[str, ...]:
+    """Message NUMBER of TEXT/ENGLISH/GAME/NAME.MSG in the instance's files, lowered with its whitespace folded and
+    split at its fields (%s, %d): the parts a line the game shows from it holds. () when there is none."""
+    text = parse_msg(GameFiles(INSTANCE).read(f"TEXT/ENGLISH/GAME/{name}.MSG")).get(number, "")
+    parts = re.split(r"%[a-z]", " ".join(text.lower().split()))
+    return tuple(p.strip() for p in parts if p.strip())
+
+
+def says(line: str, name: str, number: int) -> bool:
+    """A line the game showed (the message window, f1.state.messages) is message NUMBER of NAME.MSG."""
+    parts = game_message(name, number)
+    plain = " ".join(line.lower().split())
+    return bool(parts) and all(p in plain for p in parts)
+
+
 def gvar_index(name: str) -> int:
     """A global variable's number by its VAULT13.GAM name (e.g. "RESCUE_TANDI" -> 103)."""
     for entry in load().get("gvars", []):

@@ -54,9 +54,19 @@ def _game():
     return pid, hwnd
 
 
+def engine_cursor(mem: GameMemory) -> tuple[int, int]:
+    """The point the engine's cursor acts on, in game pixels: mouse_x/y hold the cursor picture's top left and the
+    picture's hotspot is added (mouse.c mouse_get_position; frame.py draws the picture at mouse_x/y). The usual
+    cursors' hotspot is 0, 0; an item picked up in the inventory or loot screen becomes the cursor with its hotspot at
+    its middle, and mouse_x/y jump back by it (measured on a worker's loot screen: 44, 16 at the button's press)."""
+    return mem.glob("mouse_x") + mem.glob("mouse_hotx"), mem.glob("mouse_y") + mem.glob("mouse_hoty")
+
+
 def set_cursor(sx: int, sy: int) -> None:
     """The cursor to screen point (sx, sy). In the background the engine's own cursor is moved by relative motion
-    until its mouse_x/y are there, and HRP is shown the same point as the desktop's cursor."""
+    until its cursor's point (engine_cursor) is there, and HRP is shown the same point as the desktop's cursor. A
+    headless copy takes only the relative motion: aimed at mouse_x/y alone, a dragged item's hotspot carried the drop
+    44 px right and 16 down, past the player's list (a loot took nothing on a worker)."""
     if not background():
         win32.SetCursorPos(sx, sy)
         return
@@ -67,7 +77,7 @@ def set_cursor(sx: int, sy: int) -> None:
     f.point(sx, sy)
     with GameMemory(pid) as mem:
         for _ in range(15):
-            cx, cy = mem.glob("mouse_x"), mem.glob("mouse_y")
+            cx, cy = engine_cursor(mem)
             if (cx, cy) == (x, y):
                 return
             f.nudge(x - cx, y - cy)
@@ -81,7 +91,8 @@ def cursor_pos() -> tuple[int, int]:
     pid, hwnd = _game()
     r = win32.client_rect(hwnd)
     with GameMemory(pid) as mem:
-        return r.left + mem.glob("mouse_x"), r.top + mem.glob("mouse_y")
+        x, y = engine_cursor(mem)
+        return r.left + x, r.top + y
 
 
 def mouse_button(down: bool, right: bool = False) -> None:

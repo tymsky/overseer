@@ -92,8 +92,7 @@ def weight(pid: int) -> int:
 
 def item_weight(mem, item: int, pid: int, depth: int = 0) -> int:
     """One item's weight as the engine counts it (item.c item_weight): a weapon with its loaded rounds, by the boxes
-    they would fill, a container with what is in it. Kyle's Powered Armor was refused ("...maximum weight
-    capacity") at 88 lb by the prototypes alone, of 175: the loaded cells were missing."""
+    they would fill, a container with what is in it. Kyle's Powered Armor was refused (PROTO.MSG 905) at 88 lb by the prototypes alone, of 175: the loaded cells were missing."""
     p = knowledge.proto(pid) or {}
     w = p.get("weight", 0) or 0
     if mem is None:
@@ -349,8 +348,8 @@ def droppable(actor, coming: int = 0, junk: bool = False) -> list[tuple[int, int
 
 def lighten(actor, free: int, coming: int = 0) -> dict:
     """Drop what is not needed (`droppable`) until `free` pounds can be picked up: the route's own finds (a key, a
-    disk, the Glow's armour and rifle) were refused at 169 of 175 lb ("You cannot pick that up. You are at your
-    maximum weight capacity.", live). Each drop goes through the item's menu in the inventory screen
+    disk, the Glow's armour and rifle) were refused at 169 of 175 lb (INVENTRY.MSG 25,
+    live). Each drop goes through the item's menu in the inventory screen
     (Look, Drop, ... for what has no Use: weapons, ammunition, armour); a stack asks how many."""
     dropped = []
     for _w, pid, qty in droppable(actor, coming, junk=True):

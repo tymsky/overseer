@@ -106,9 +106,15 @@ def astar(start: int, goals: set[int], blocked: frozenset[int], limit: int = 600
 
 
 def scroll_towards(actor, tile: int, max_presses: int = 40) -> bool:
-    """Arrow keys until `tile` is well inside the view (each press moves the camera one hex)."""
+    """Arrow keys until `tile` is well inside the view (each press moves the camera one hex). A copy whose view
+    follows the player (session.camera_follows) gets no keys: they jumped the view by a hex while the camera glided
+    back after the player's next step, and a click computed between the two missed; its view is let come to rest
+    and the tile is on it or not."""
     from f1 import session
 
+    if session.camera_follows():
+        actor.still_view()
+        return geometry.on_view(tile, actor.snap().camera, 48)
     for _ in range(max_presses):
         cam = actor.snap().camera
         if geometry.on_view(tile, cam, 48):

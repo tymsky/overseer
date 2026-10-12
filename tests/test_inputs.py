@@ -122,3 +122,53 @@ def test_another_copy_is_found_by_its_exe_and_fed_through_its_own_memory(monkeyp
     finally:
         session.use_copy(None)
         f.close()
+
+
+class DragEngine:
+    """A headless copy's engine: relative motion moves mouse_x/y, the picture's top left; a dragged item's cursor has
+    its hotspot at (44, 16), so mouse_x/y sit that far up and left of the point it acts on (measured)."""
+
+    def __init__(self) -> None:
+        self.x, self.y, self.hot = 1104, 345, (44, 16)
+
+    def glob(self, name: str) -> int:
+        return {"mouse_x": self.x, "mouse_y": self.y, "mouse_hotx": self.hot[0], "mouse_hoty": self.hot[1]}[name]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return None
+
+
+class MotionFeed:
+    def __init__(self, engine: DragEngine) -> None:
+        self.engine = engine
+
+    def point(self, sx: int, sy: int) -> None:
+        pass
+
+    def nudge(self, dx: int, dy: int) -> None:
+        self.engine.x, self.engine.y = self.engine.x + dx, self.engine.y + dy
+
+    def wait_reads(self, n: int = 2) -> bool:
+        return True
+
+
+def test_a_dragged_item_lands_where_aimed_on_a_headless_copy(monkeypatch):
+    from types import SimpleNamespace
+
+    from f1 import win32
+
+    engine = DragEngine()
+    monkeypatch.setattr(inputs, "background", lambda: True)
+    monkeypatch.setattr(inputs, "_game", lambda: (1, 2))
+    monkeypatch.setattr(inputs, "feed", lambda: MotionFeed(engine))
+    monkeypatch.setattr(inputs, "GameMemory", lambda pid: engine)
+    monkeypatch.setattr(win32, "client_rect", lambda hwnd: SimpleNamespace(left=10, top=20, width=1920, height=1080))
+    inputs.set_cursor(10 + 770, 20 + 457)  # the player's list
+    assert inputs.engine_cursor(engine) == (770, 457)  # the drop's point, not the picture's corner
+    assert (engine.x, engine.y) == (726, 441)
+    engine.hot = (0, 0)  # the usual cursor: its corner is its point
+    inputs.set_cursor(10 + 100, 20 + 50)
+    assert (engine.x, engine.y) == (100, 50) and inputs.cursor_pos() == (110, 70)

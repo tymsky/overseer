@@ -121,8 +121,8 @@ class LineOfFire:
 
 
 def shot_blocked(snap: Snapshot, source: Obj, from_tile: int, to_tile: int, target: Obj | None) -> LineOfFire:
-    """combat_is_shot_blocked: walk from FROM_TILE to TO_TILE; anything but a critter blocks ("Your aim is
-    blocked."); each critter met counts and the walk goes on from its tile."""
+    """combat_is_shot_blocked: walk from FROM_TILE to TO_TILE; anything but a critter blocks (the game
+    says so: COMBAT.MSG 104); each critter met counts and the walk goes on from its tile."""
     critters, obstacle, current, met = 0, source, from_tile, []
     for _ in range(1000):  # the engine has no bound; a walk always moves on, the bound only guards this port
         if obstacle is None or current == to_tile:
