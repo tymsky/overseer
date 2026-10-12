@@ -6,7 +6,7 @@ the entry-point group `overseer.home` (a string path); this repo's own folder. U
     instance/    the copy of the game the bot plays (f1.instance build); never the Steam install itself
     extracted/   knowledge.json and the scripts, taken from the game's files (f1.knowledge build, f1.intdump extract)
     runs/        one folder per run: events.jsonl and what the run wrote
-    saves/       kept saves (flows.keep_save, flows load NAME) and the save backups taken before each session
+    saves/       kept saves, the checkpoints (f1.saves; flows.keep_save, flows load NAME) and the save backups taken before each session
     captures/    pictures (session shot, smoke)
 
 None of it goes into git: it is the game's own material or made from it.

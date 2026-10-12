@@ -104,3 +104,16 @@ Latin-1 text with CRLF line ends, entries `{number}{sound}{text}`. The text may 
   scripts name them), exit grids to the town map (-2); V13ENT has the spatial scripts `cave2v13`, `valtleav`,
   `ratpit`; SHADYW puts Seth (script `seth`) on tile 14108, where he stood live, and JUNKCSNO has Gizmo and
   Izo. Not yet understood: JUNKKILL's Vinnie reads script index 0 (`obj_dude`).
+
+## Saves (`DATA\SAVEGAME\SLOTnn\SAVE.DAT`)
+
+- `f1/savegame.py`. A slot folder holds `SAVE.DAT` and the visited maps' states (`<MAP>.SAV`, `AUTOMAP.SAV`); a save
+  first renames them to `.BAK` and writes them anew, so a copy waits until the folder stands still and leaves the
+  `.BAK` files out (`f1/saves.py`).
+- The header, big-endian, as the save screen lists it (loadsave.c SaveHeader): signature `FALLOUT SAVE FILE` at 0,
+  the character's name (32 bytes) at 29, the description (30) at 0x3D, the file's date and time at 91, the game's
+  month, day, year (three shorts) at 101, the game time (0.1 s ticks) at 107, the elevation at 111, the map's index
+  at 113, the map's save file (16 bytes, e.g. `V13ENT.sav`) at 115; 30 000 bytes in all with the thumbnail.
+- The GVARs follow at 30055 (see `f1/savegame.py`).
+- Checked: saves made by the game's save screen read back with the typed description, the map the player stood on
+  and its elevation.

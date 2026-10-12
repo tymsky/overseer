@@ -92,23 +92,15 @@ GOLDEN = paths.SAVES
 
 
 def restore_golden(name: str, slot: int = 1) -> Path:
-    """Copy a kept save (saves/<name>/SLOT01) into the instance's slot; the slot's old files are backed
-    up next to it first. The game must not be running (it caches the slot list)."""
-    import shutil
+    """The checkpoint NAME (f1.saves) into the instance's slot; the slot's old files are kept first as the checkpoint
+    replaced-<time>. Here the game must not run (start_from stops it first); f1.saves.install works on a running one."""
+    from f1 import saves
 
-    from f1 import instance
-
-    src = GOLDEN / name / "SLOT01"
-    dst = instance.INSTANCE_DIR / "DATA" / "SAVEGAME" / f"SLOT{slot:02d}"
-    if not (src / "SAVE.DAT").exists():
-        raise FlowError(f"no kept save {src}")
     if session.game_pid():
-        raise FlowError("the game is running: it caches the slot list, and its slot must not change under it")
-    if dst.exists():
-        shutil.copytree(dst, GOLDEN / f"replaced-{time.strftime('%Y%m%d-%H%M%S')}" / dst.name)
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst)
-    return dst
+        raise FlowError("the game is running: start_from stops it first")
+    if (saves.slot_dir(slot) / "SAVE.DAT").exists():
+        saves.keep(slot, f"replaced-{time.strftime('%Y%m%d-%H%M%S')}")
+    return saves.install(name, slot)
 
 
 # The agent's preferences (development runs: every speed at its maximum, combat difficulty Wimpy). Each
@@ -175,32 +167,14 @@ def set_preferences(pid: int, wanted: dict[str, int] = AGENT_PREFS) -> dict:
 
 
 def keep_save(name: str, slot: int = 1) -> Path:
-    """Copy the instance's slot to saves/<name>/SLOT01, the other way round from restore_golden."""
-    import shutil
+    """The instance's slot kept as the checkpoint NAME (f1.saves.keep: copied once its files stand still, the .BAK
+    files left out: a copy made right after a quick save held SAVE.DAT at 29 696 of 40 105 bytes and seven maps
+    only as .BAK, and would not load); refused when NAME is kept already. The copy of the save itself."""
+    from f1 import saves
 
-    from f1 import instance
-
-    src = instance.INSTANCE_DIR / "DATA" / "SAVEGAME" / f"SLOT{slot:02d}"
-    dst = GOLDEN / name / "SLOT01"
-    if not (src / "SAVE.DAT").exists():
-        raise FlowError(f"no save in {src}")
-    if dst.exists():
+    if (saves.paths.SAVES / name / "SLOT01").exists():
         raise FlowError(f"kept save {name} exists already")
-
-    # a save renames the slot's files to .BAK and writes them anew: a copy made right after the quicksave held
-    # SAVE.DAT at 29 696 of 40 105 bytes and seven maps only as .BAK, and would not load ("Error loading game!").
-    # Copied once the folder has stood still for 2 s, the .BAK files left out
-    def look() -> tuple:
-        return tuple(sorted((f.name, f.stat().st_size, f.stat().st_mtime_ns) for f in src.iterdir()))
-
-    seen, since = look(), time.monotonic()
-    while time.monotonic() - since < 2.0:
-        time.sleep(0.25)
-        now = look()
-        if now != seen:
-            seen, since = now, time.monotonic()
-    shutil.copytree(src, dst, ignore=shutil.ignore_patterns("*.BAK"))
-    return dst
+    return saves.keep(slot, name) / "SLOT01"
 
 
 def load_from_menu(pid: int, slot: int = 1, prefs: dict[str, int] | str | None = BY_CHARACTER) -> state.Snapshot:

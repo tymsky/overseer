@@ -117,6 +117,11 @@ GLOBAL_LIST = (
     # at startup (gmovie.cc gmovie_init), so a game started with fallout.cfg's music on keeps its movies' sound
     Global("music_volume", 0x661EFC, 3, "options.c preference: 0..32767, the background music"),
     Global("lsgwin", 0x612D58, 3, "save/load screen"),
+    # loadsave.c: the slot list's state (code references counted in the exe: 96, 7, 9, 18)
+    Global("slot_cursor", 0x50595C, 50, "the save/load screen's slot under the cursor, 0..9 (kept between screens)"),
+    Global("quick_done", 0x505960, 3, "1 once a slot was saved or loaded: F6 then saves to slot_cursor at once"),
+    Global("LSData", 0x6122B0, 5, "LoadSaveSlotData[10] (LS_SLOT_SIZE bytes each): each slot's header as listed"),
+    Global("LSstatus", 0x612800, 10, "int[10]: 0 empty, 1 occupied, 2 unreadable, 3 another version"),
     Global("elev_win", 0x56ED58, 3, "elevator panel"),
     Global("endgame_window", 0x56EEC0, 2, "endgame slides"),
     Global("call_win", 0x56BC74, 3, "called-shot window"),
@@ -164,6 +169,9 @@ GLOBAL_LIST = (
     Global("dialogueBackWindow", 0x50502C, 3, "dialogue: the background window; -1 when none"),
 )
 GLOBALS = {g.name: g for g in GLOBAL_LIST}
+# LoadSaveSlotData (loadsave.h): (0x612800 - 0x6122B0) / 10 bytes; the fields as SAVE.DAT's header, the description
+# (30 bytes) at 0x3D
+LS_SLOT_SIZE, LS_DESCRIPTION = 0x88, 0x3D
 if len(GLOBALS) != len(GLOBAL_LIST):  # a name given twice would silently keep its last entry
     raise ImportError("engine_map.GLOBAL_LIST names a global twice")
 

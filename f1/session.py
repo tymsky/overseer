@@ -104,6 +104,11 @@ def use_copy(exe: Path | None, input_name: str | None = None, headless: bool = F
     inputs.use_copy(input_name if exe is not None else None)
 
 
+def game_dir() -> Path:
+    """The folder of the copy the play code drives (its DATA\SAVEGAME holds that copy's slots)."""
+    return Path(_copy["exe"]).parent if "exe" in _copy else EXE_PATH.parent
+
+
 def game_pid() -> int | None:
     pids = win32.pids_of(str(_copy.get("exe", EXE_PATH)))
     return pids[0] if pids else None

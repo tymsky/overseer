@@ -6,7 +6,8 @@
 Measured on every kept save: SAVE.DAT holds the GVARs twice, as big-endian ints in VAULT13.GAM's
 order, identical, the first block always at byte 30055 (after the 30000-byte header), the second at an offset that
 varies with the save. The reader anchors on GVARs 148-149, the Followers' and Necropolis' invasion dates (90, 110):
-no script changes those two (checked over every script). The save's description is the 30 bytes at 0x3D.
+no script changes those two (checked over every script). The save's description is the 30 bytes at 0x3D; header()
+reads the rest of what the save screen lists.
 """
 
 import struct
@@ -32,6 +33,28 @@ def gvars(data: bytes) -> list[int]:
 
 def description(data: bytes) -> str:
     return data[0x3D : 0x3D + 30].split(b"\0")[0].decode("latin-1")
+
+
+def _text(raw: bytes) -> str:
+    return raw.split(b"\0")[0].decode("latin-1")
+
+
+def header(data: bytes) -> dict:
+    """What the save screen lists (loadsave.c SaveHeader, big-endian): the character, the description, the game's date
+    and time, and where the save was made (the elevation, the map's index and its file, e.g. "V13ENT.SAV")."""
+    if len(data) < 131 or not data.startswith(b"FALLOUT SAVE FILE"):
+        raise ValueError("not a SAVE.DAT")
+    month, day, year = struct.unpack(">3h", data[101:107])
+    elevation, map_index = struct.unpack(">2h", data[111:115])
+    return {
+        "character": _text(data[29:61]),
+        "description": _text(data[61:91]),
+        "game_date": (year, month, day),
+        "game_time": struct.unpack(">I", data[107:111])[0],
+        "elevation": elevation,
+        "map_index": map_index,
+        "map_file": _text(data[115:131]),
+    }
 
 
 def save_files(path: Path) -> list[Path]:
