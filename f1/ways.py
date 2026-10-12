@@ -334,7 +334,7 @@ def take(actor, way: Way, walls: doors.Walls | None = None, timeout_s: float = 2
     from f1 import quests, win32
 
     walls = walls or doors.WALLS
-    actor.log.emit("action_start", action="take_way", **way.to_dict())
+    actor.log.emit("action_start", action="take_way", way=way.to_dict())
     if way.kind == "exit":
         s = actor.snap()
         from f1 import nav
