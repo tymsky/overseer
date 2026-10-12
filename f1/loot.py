@@ -14,8 +14,13 @@ Worth taking (`worth`):
 - a weapon that would become the best way to fight (weapons.choose);
 - armour dearer than what is worn.
 
-Nothing goes past the carry limit (25 + 25 x ST, stat.c). A body or a container is emptied whole (Actor.loot drags
-each item), so it is taken only when something in it is worth it and all of it fits.
+Nothing goes past the carry limit (25 + 25 x ST, stat.c; Small Frame takes 10 x ST off). The engine refuses an item
+that would take the load past it (item.c item_add_mult: load + the item's weight > the limit), and the load is
+counted as the engine counts it (`item_weight`: a gun's loaded rounds, a container's contents, worn and held items
+too). A body or a container is emptied whole (Actor.loot drags each item), so it is taken only when something in it
+is worth it and all of it fits: before a take the find is weighed (`check`) and, when it would not fit, room is made
+by dropping what the character can do without, the least worth a pound first (`room_plan`, `make_room`); a find no
+room can be made for is refused before any click (TOO_HEAVY).
 
     python -m f1.loot            what the running game's floor offers, and why
     python -m f1.loot take       and take it
@@ -63,7 +68,8 @@ class Find:
     name: str
     items: tuple[tuple[int, int], ...]  # (pid, quantity)
     worth: tuple[str, ...]  # why it is taken; empty: it is not
-    weight: int
+    weight: int  # as the engine weighs it (item_weight): a gun's loaded rounds, a container's contents
+    value: int = 0  # the prototypes' cost of its items
 
 
 def inventory(mem, address: int) -> list[tuple[int, int, int]]:
@@ -112,6 +118,22 @@ def carried_weight(actor) -> int:
 STAT_CARRY_WEIGHT = 12
 
 
+STAT_STRENGTH = 0
+CARRY_MAX = 999  # stat.c's range for the carry weight
+SMALL_FRAME_PER_ST = 10  # trait.c trait_adjust_stat: Small Frame takes 10 x base ST off the carry weight
+
+
+def limit_of(base: list[int], bonus: list[int], traits: set[int]) -> int:
+    """stat.c stat_level(STAT_CARRY_WEIGHT) for the player: the prototype's base (25 + 25 x ST, set by
+    stat_recalc_derived) and bonus, Small Frame's cut, within 0..999."""
+    from f1 import chargen
+
+    value = base[STAT_CARRY_WEIGHT] + bonus[STAT_CARRY_WEIGHT]
+    if chargen.TRAITS.index("small frame") in traits:
+        value -= SMALL_FRAME_PER_ST * base[STAT_STRENGTH]
+    return max(0, min(value, CARRY_MAX))
+
+
 def carry_limit(actor) -> int:
     """The character's carry weight stat, bonuses in (the Powered Armor's ST +3 made it 250, live); the
     formula from base ST when the stat cannot be read."""
@@ -120,8 +142,9 @@ def carry_limit(actor) -> int:
     try:
         base = chargen.ints(actor.mem, "pc_proto", 35, chargen.BASE_STATS)
         bonus = chargen.ints(actor.mem, "pc_proto", 35, chargen.BASE_STATS + 35 * 4)
+        traits = set(chargen.ints(actor.mem, "pc_trait", 2))
         if base[STAT_CARRY_WEIGHT] + bonus[STAT_CARRY_WEIGHT] > 0:
-            return base[STAT_CARRY_WEIGHT] + bonus[STAT_CARRY_WEIGHT]
+            return limit_of(base, bonus, traits)
     except (AttributeError, TypeError, ValueError, OSError):  # a fake actor in tests has no memory: the formula
         return CARRY_BASE + CARRY_PER_ST * actor.rules().strength
     return CARRY_BASE + CARRY_PER_ST * actor.rules().strength
@@ -216,6 +239,77 @@ WEIGHT_SLACK = 2  # lb kept spare past the need: the engine's own count is used 
 
 def spare_weight(actor) -> int:
     return carry_limit(actor) - carried_weight(actor)
+
+
+def load(actor) -> list[dict]:
+    """The player's load, an inventory entry a row: pid, name, count, one item's weight as the engine counts it."""
+    mem = getattr(actor, "mem", None)
+    return [
+        {"pid": pid, "name": knowledge.proto_name(pid), "count": qty, "each": item_weight(mem, item, pid)}
+        for item, pid, qty in actor.items()
+    ]
+
+
+def object_weight(mem, address: int, pid: int) -> int:
+    """What taking an object adds to the load: a loose item's own weight (item_weight); a body's or a container's
+    inventory, whole (what Actor.loot drags over)."""
+    if pid >> 24 == 1 or (knowledge.proto(pid) or {}).get("item_type") == "container":  # a critter, a container
+        return sum(item_weight(mem, i, ip) * q for i, ip, q in inventory(mem, address))
+    return item_weight(mem, address, pid)
+
+
+def check(actor, weight: int) -> dict:
+    """Would `weight` lb fit? The engine's rule (item.c item_add_mult): refused when load + weight > limit."""
+    pack, limit = carried_weight(actor), carry_limit(actor)
+    return {"pack": pack, "take": weight, "limit": limit, "fits": pack + weight <= limit, "need": pack + weight - limit}
+
+
+def room_plan(actor, need: int, worth: int | None = None) -> list[tuple[int, int]] | None:
+    """(pid, how many) to drop to free `need` lb, of what the character can do without (`droppable`, junk too),
+    the least worth a pound first (Fallout 2's make_room): [] when nothing need go; None when it cannot be freed,
+    or when what would go is worth `worth` or more (caps, the prototypes' cost)."""
+    if need <= 0:
+        return []
+    each: dict[int, int] = {}
+    for item, pid, _qty in actor.items():
+        each.setdefault(pid, item_weight(getattr(actor, "mem", None), item, pid))
+    units = []  # (worth a pound, pid, a unit's value, a unit's weight)
+    for _w, pid, qty in droppable(actor, junk=True):
+        w = each.get(pid, weight(pid))
+        if w <= 0:
+            continue
+        value = (knowledge.proto(pid) or {}).get("cost", 0) or 0
+        units += [(value / w, pid, value, w)] * qty
+    plan: dict[int, int] = {}
+    freed = spent = 0
+    for _, pid, value, w in sorted(units):
+        if freed >= need:
+            break
+        plan[pid] = plan.get(pid, 0) + 1
+        freed, spent = freed + w, spent + value
+    if freed < need or (worth is not None and spent >= worth):
+        return None
+    return list(plan.items())
+
+
+def make_room(actor, need: int, worth: int | None = None) -> dict:
+    """Drop `room_plan`'s items so that `need` lb more fit; what went and the spare weight read back from memory."""
+    plan = room_plan(actor, need, worth)
+    before = spare_weight(actor)
+    dropped = []
+    for pid, n in plan or []:
+        went = drop(actor, pid, n)
+        dropped.append((knowledge.proto_name(pid), went))
+        _dropped.add(pid)  # not swept up again
+    if dropped:
+        try:
+            DROPPED_FILE.write_text(json.dumps(sorted(_dropped)), encoding="utf-8")
+        except OSError:
+            pass
+    out = {"need": need, "plan": plan, "dropped": dropped, "spare": spare_weight(actor)}
+    out["ok"] = plan is not None and out["spare"] - before >= need
+    actor.log.emit("make_room", **out)
+    return out
 
 
 def droppable(actor, coming: int = 0, junk: bool = False) -> list[tuple[int, int, int]]:
@@ -338,7 +432,9 @@ def finds(actor, w: Wants | None = None, town_containers: bool = False) -> list[
         why = tuple(dict.fromkeys(r for pid in pids if (r := worth(pid, w, pids))))
         if why and t.type == "item" and scripts.script_of(mem, t.address):  # looked up only for what is wanted
             continue
-        out.append(Find(t.address, t.tile, kind, t.name, tuple(items), why, sum(weight(p) * q for p, q in items)))
+        lb = object_weight(mem, t.address, t.pid)
+        value = sum(((knowledge.proto(p) or {}).get("cost", 0) or 0) * q for p, q in items)
+        out.append(Find(t.address, t.tile, kind, t.name, tuple(items), why, lb, value))
     return out
 
 
@@ -346,14 +442,48 @@ def _key(actor, f: Find) -> tuple[str, int, int]:
     return actor.snap().map_name, f.tile, f.items[0][0] if f.kind == "floor" else -f.address
 
 
-TAKEN, FAILED, NO_WAY = "taken", "failed", "no way"
+TAKEN, FAILED, NO_WAY, TOO_HEAVY = "taken", "failed", "no way", "too heavy"
+
+
+def fits_or_room(actor, f: Find) -> bool:
+    """The find fits now, or room can be made for it (`room_plan`)."""
+    c = check(actor, f.weight)
+    return c["fits"] or room_plan(actor, c["need"], f.value or None) is not None
+
+
+def weigh(actor, f: Find) -> bool:
+    """Before a take: the find fits, or room is made for it first; False (logged) when it cannot be."""
+    return _weigh(actor, f.weight, f.value, name=f.name, tile=f.tile)
+
+
+def weigh_object(actor, address: int, pid: int) -> bool:
+    """`weigh` for an object the play code takes directly (Actor.loot's body or container, Actor.pick_up's item):
+    the hook for those, before the click."""
+    mem = actor.mem
+    whole = pid >> 24 == 1 or (knowledge.proto(pid) or {}).get("item_type") == "container"
+    items = [(ip, q) for _, ip, q in inventory(mem, address)] if whole else [(pid, 1)]
+    value = sum(((knowledge.proto(p) or {}).get("cost", 0) or 0) * q for p, q in items)
+    return _weigh(actor, object_weight(mem, address, pid), value, name=knowledge.proto_name(pid), address=address)
+
+
+def _weigh(actor, lb: int, value: int, **about) -> bool:
+    c = check(actor, lb)
+    if c["fits"]:
+        return True
+    room = make_room(actor, c["need"], value or None)
+    if not room["ok"]:
+        actor.log.emit("check_failed", what="too heavy to take", **about, **c)
+    return room["ok"]
 
 
 def take(actor, f: Find, watched: frozenset[int] = frozenset()) -> str:
     """A loose item picked up; a body or a container emptied: TAKEN, FAILED, or NO_WAY when no path keeps out of the
     hexes foes watch (`watched`, f1.perception) for now. The way there keeps out of them as far as the last hexes,
     which the engine walks by itself for the click; a body is clicked from near it (the Agent's own sprite over it
-    takes the click, quests.loot_the_dead)."""
+    takes the click, quests.loot_the_dead). TOO_HEAVY, before any step, when it would not fit and no room can be
+    made for it (`weigh`)."""
+    if not weigh(actor, f):
+        return TOO_HEAVY
     s = actor.snap()
     obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
     near = (3, 4) if f.kind == "body" else (1, 2)
@@ -393,12 +523,11 @@ def sweep(actor, max_hexes: int = 200, budget_s: float = 150.0) -> dict:
         if s.screen != "map" or s.dude is None or actor.in_combat():
             break
         watched = danger(actor)
-        room = carry_limit(actor) - carried_weight(actor)
         todo = [
             f
             for f in finds(actor)
             if f.worth
-            and f.weight <= room
+            and fits_or_room(actor, f)
             and _key(actor, f) not in _tried
             and _key(actor, f) not in later
             and geometry.distance(f.tile, s.dude.tile) <= max_hexes
@@ -408,7 +537,7 @@ def sweep(actor, max_hexes: int = 200, budget_s: float = 150.0) -> dict:
             break
         f = min(todo, key=lambda f: geometry.distance(f.tile, s.dude.tile))
         status = take(actor, f, watched)
-        if status == FAILED:
+        if status in (FAILED, TOO_HEAVY):
             _tried.add(_key(actor, f))
         elif status == NO_WAY:
             later.add(_key(actor, f))

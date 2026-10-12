@@ -101,3 +101,81 @@ def test_a_gun_weighs_with_the_boxes_its_rounds_would_fill() -> None:
     assert loot.item_weight(WeaponMem(0, cell), 0, plasma_pistol) == 4
     assert loot.item_weight(WeaponMem(16, cell), 0, plasma_pistol) == 7  # item.c item_weight: (16 - 1) // 40 + 1
     assert loot.item_weight(WeaponMem(41, cell), 0, plasma_pistol) == 10
+
+
+def test_the_carry_limit_as_stat_level_counts_it() -> None:
+    base, bonus = [6] + [0] * 11 + [175], [0] * 13
+    assert loot.limit_of(base, bonus, set()) == 175  # 25 + 25 x ST 6
+    assert loot.limit_of(base, bonus[:12] + [75], set()) == 250  # a bonus (the Powered Armor's ST +3)
+    assert loot.limit_of(base, bonus, {2}) == 115  # Small Frame: 10 x base ST off
+    assert loot.limit_of(base, bonus[:12] + [-500], set()) == 0  # stat.c's range
+
+
+class Pack:
+    """A player carrying ITEMS (address, pid, count), the prototypes' weights (no memory)."""
+
+    mem = None
+
+    def __init__(self, items: list[tuple[int, int, int]]) -> None:
+        self._items = items
+        self.log = self
+
+    def items(self) -> list[tuple[int, int, int]]:
+        return self._items
+
+    def emit(self, *_a, **_k) -> None:
+        pass
+
+
+def test_an_item_fits_up_to_the_limit_itself(monkeypatch) -> None:
+    monkeypatch.setattr(loot, "carried_weight", lambda a: 170)
+    monkeypatch.setattr(loot, "carry_limit", lambda a: 175)
+    assert loot.check(None, 5)["fits"]  # item.c item_add_mult refuses only load + weight > limit
+    assert not loot.check(None, 6)["fits"] and loot.check(None, 6)["need"] == 1
+
+
+def test_room_is_made_the_least_worth_a_pound_first(monkeypatch) -> None:
+    pack = Pack([(1, RIFLE, 1), (2, LEATHER, 1), (3, SHELLS, 3)])
+    w = {p: knowledge.proto(p)["weight"] for p in (RIFLE, LEATHER, SHELLS)}
+    c = {p: knowledge.proto(p)["cost"] for p in (RIFLE, LEATHER, SHELLS)}
+    order = sorted((RIFLE, LEATHER, SHELLS), key=lambda p: c[p] / w[p])
+    monkeypatch.setattr(loot, "droppable", lambda a, coming=0, junk=False: [(w[RIFLE], RIFLE, 1),
+                        (w[LEATHER], LEATHER, 1), (3 * w[SHELLS], SHELLS, 3)])  # fmt: skip
+    assert loot.room_plan(pack, 0) == []
+    assert loot.room_plan(pack, 1)[0][0] == order[0]
+    everything = w[RIFLE] + w[LEATHER] + 3 * w[SHELLS]
+    assert sorted(loot.room_plan(pack, everything)) == sorted([(RIFLE, 1), (LEATHER, 1), (SHELLS, 3)])
+    assert loot.room_plan(pack, everything + 1) is None  # cannot be freed
+    assert loot.room_plan(pack, 1, worth=1) is None  # what would go is worth more than the find
+
+
+def test_a_find_that_cannot_fit_is_refused_before_any_step(monkeypatch) -> None:
+    monkeypatch.setattr(loot, "carried_weight", lambda a: 170)
+    monkeypatch.setattr(loot, "carry_limit", lambda a: 175)
+    monkeypatch.setattr(loot, "droppable", lambda a, coming=0, junk=False: [])
+    f = loot.Find(1, 17488, "body", "Bones", ((KNIFE, 1), (AP_10MM, 1)), ("ammo",), 6, 100)
+    steps = []
+    monkeypatch.setattr(loot.nav, "go_to", lambda *a, **k: steps.append(a) or (True, ""))
+    assert loot.take(Pack([]), f) == loot.TOO_HEAVY and not steps
+    assert not loot.fits_or_room(Pack([]), f)
+
+
+class FloorMem:
+    """A loose item's object: no inventory, no loaded rounds."""
+
+    def i32(self, address: int) -> int:
+        return 0
+
+    def u32(self, address: int) -> int:
+        return 0
+
+
+def test_a_direct_take_is_weighed_too(monkeypatch) -> None:
+    monkeypatch.setattr(loot, "carried_weight", lambda a: 175)
+    monkeypatch.setattr(loot, "carry_limit", lambda a: 175)
+    monkeypatch.setattr(loot, "droppable", lambda a, coming=0, junk=False: [])
+    pack = Pack([])
+    pack.mem = FloorMem()
+    assert not loot.weigh_object(pack, 0x1000, KNIFE)  # 1 lb past a full pack, nothing can go
+    monkeypatch.setattr(loot, "carried_weight", lambda a: 174)
+    assert loot.weigh_object(pack, 0x1000, KNIFE)
