@@ -21,13 +21,13 @@ import random
 import sys
 from dataclasses import dataclass, field
 
-from f1 import chargen, geometry, knowledge, paths, weapons
+from f1 import chargen, geometry, knowledge, light, paths, weapons
 from f1.engine_map import Obj
 
-AMBIENT_LIGHT = 0x5057E0  # light.c ambient_light
-TILE_INTENSITY = 0x59CF1C  # light.c tile_intensity[3][40000]
-LIGHT_MAX = 65536
-DARK = ((26214, -40), (39321, -25), (52428, -10))  # combat.c: the player's shot in poor light
+AMBIENT_LIGHT = light.AMBIENT  # f1.light: the addresses and the limits, read in the exe's code
+TILE_INTENSITY = light.TILE_INTENSITY
+LIGHT_MAX = light.MAX
+DARK = light.PENALTIES  # combat.c: the player's shot in poor light
 STAT_AP, STAT_AC, STAT_MELEE, STAT_DT, STAT_DR = 8, 9, 11, 17, 24  # stat.h, normal damage's DT and DR
 UNARMED_AP, RELOAD_AP = 3, 2
 CLOSE_RANGE = 2  # hexes a gun shoots a foe without a gun from, once the fight has closed in (Actor.fight)
@@ -35,11 +35,8 @@ DIFFICULTY_HIT = {0: -20, 1: 0, 2: 20}  # combat difficulty: Wimpy, Normal, Roug
 DIFFICULTY_DAMAGE = {0: 0.75, 1: 1.0, 2: 1.25}
 
 
-def light_penalty(light: int) -> int:
-    for limit, penalty in DARK:
-        if light <= limit:
-            return penalty
-    return 0
+def light_penalty(intensity: int) -> int:
+    return light.penalty(intensity)
 
 
 def gun_range(dist: int, pe: int) -> int:
@@ -142,9 +139,7 @@ def fight(me: Attacker, foes: list[Attacker], trials: int = 2000, max_turns: int
 
 def visible_light(mem, elevation: int, tile: int) -> int:
     """object.c obj_get_visible_light for a critter (not the player): the tile's light, at least the ambient one."""
-    ambient = mem.i32(AMBIENT_LIGHT)
-    tile_light = mem.i32(TILE_INTENSITY + 4 * (elevation * 40000 + tile)) if 0 <= tile < 40000 else 0
-    return min(LIGHT_MAX, max(ambient, tile_light))
+    return light.of_object(mem, elevation, tile)
 
 
 def player_stats(mem) -> list[int]:

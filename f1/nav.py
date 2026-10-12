@@ -9,7 +9,7 @@ import heapq
 import time
 from dataclasses import dataclass
 
-from f1 import geometry, knowledge, state, win32
+from f1 import geometry, knowledge, state, traps, win32
 from f1.engine_map import Obj
 
 OBJECT_HIDDEN, OBJECT_NO_BLOCK = 0x01, 0x10
@@ -226,6 +226,29 @@ def next_step(path: list[int], cam: geometry.Camera, max_hexes: int = 10, margin
     return best
 
 
+def lens(a: int, b: int) -> set[int]:
+    """Every tile on some shortest hex path from A to B: the engine's own path between two points of ours keeps to
+    it when nothing blocks the way."""
+    d = geometry.distance(a, b)
+    return {t for r in range(d + 1) for t in geometry.ring(a, r) if geometry.distance(t, b) == d - r}
+
+
+def clear_leg(path: list[int], i: int, avoid: frozenset[int]) -> int:
+    """The farthest index up to I whose leg from the path's start cannot cross AVOID (its lens is clear); at least
+    1, the next hex (our path keeps off AVOID)."""
+    while i > 1 and lens(path[0], path[i]) & avoid:
+        i -= 1
+    return i
+
+
+def trap_tiles(actor, elevation: int) -> frozenset[int]:
+    """The armed traps' areas on this elevation of the loaded map (f1.traps), read from the game's script list."""
+    try:
+        return traps.avoid(traps.armed(actor.mem, elevation))
+    except (OSError, ValueError):  # a list being rebuilt (a map's change): no traps this step
+        return frozenset()
+
+
 def edge_step(at: int, goal: int, cam: geometry.Camera, blocked: frozenset[int], reach: int) -> int | None:
     """The hex on the view (8 px in) within `reach` of the player that is nearest `goal`, if two hexes nearer than
     the player: the way along a map's edge when the path itself leaves the view there."""
@@ -245,7 +268,9 @@ def go_to(
 ) -> tuple[bool, str]:
     """Walk the player to any of `goals` on this map. Returns (reached, why). An exit grid ends the map: reached.
     `avoid` holds hexes the path must not cross (a radiation hot spot and a margin round it): planned around like
-    walls, and walked in short steps, as the engine finds its own way between two points of ours. Logged as an
+    walls, and walked in short steps, as the engine finds its own way between two points of ours. The armed traps'
+    areas (f1.traps) are added on every step and kept off the same way, each leg short enough that no shortest way
+    between its ends enters them; only when no way keeps off them is one taken through (logged). Logged as an
     action with the length of its first plan, which a review of the run can hold the walked hexes against."""
     s = actor.snap()
     actor.log.emit(
@@ -265,6 +290,7 @@ def go_to(
 def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], plan: list[int]) -> tuple[bool, str]:
     """go_to's walk; `plan` gets the first path's length in hexes."""
     reach = 4 if avoid else 16
+    caller_avoid, through_trap = avoid, False
     start_map = actor.snap().map_name
     refused: set[int] = set()  # tiles the engine would not walk to (twice from the same place): planned around
     misses: dict[tuple[int, int], int] = {}
@@ -284,6 +310,14 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         if s.dude.tile in goals:
             return True, "arrived"
         obs = obstacles(actor.mem, s.elevation, s.dude.address)
+        avoid = caller_avoid | (trap_tiles(actor, s.elevation) - goals - {s.dude.tile})
+        if (
+            avoid != caller_avoid
+            and astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid) is None
+        ):
+            if not through_trap:
+                actor.log.emit("trap_unavoidable", at=s.dude.tile, tiles=len(avoid - caller_avoid))
+            through_trap, avoid = True, caller_avoid
         # locked doors only when there is no way round them (MSTRLR34's 21492 cost 16 s of the Master's countdown)
         path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | obs.locked | refused | avoid)
         path = path or astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
@@ -361,6 +395,8 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
                     return False, "cannot bring the path into view"
             else:
                 continue
+        if avoid:
+            i = clear_leg(path, i, avoid)
         before = actor.snap().dude.tile
         # A leg that ends the way (a goal, an exit grid, the hex before a door, the path's end, the last step allowed)
         # or keeps out of the foes' notice stops there: the caller then finds the player standing (the hunt walks
