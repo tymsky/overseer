@@ -58,8 +58,10 @@ GLOBAL_LIST = (
     Global("map_local_vars", 0x505AE8, 3, "int*: every script's LVARs on this map (each script has an offset)"),
     Global("num_map_local_vars", 0x505AF0, 3),
     Global("scriptlists", 0x507860, 3, "scripts.c: ScriptList[5] {head, tail, extents, next id}; critters are 4"),
-    Global("obj_mouse", 0x59520C, 5, "Object* of the hex cursor: its tile is the hex under the mouse (move mode)"),
-    Global("obj_mouse_flat", 0x595210, 3),
+    Global("obj_mouse", 0x59520C, 5, "Object* of the hex cursor (moved by pixels: its tile stays -1 in move mode)"),
+    Global(
+        "obj_mouse_flat", 0x595210, 3, "Object* of the flat cursor: in move mode its tile is the hex under the mouse"
+    ),
     Global("gmouse_enabled", 0x50525C, 3),
     Global("gmouse_3d_current_mode", 0x505394, 3, "0 move (hex cursor), 1 arrow (command), 2 crosshair, ..."),
     Global("last_object", 0x595214, 2, "Object* the arrow cursor rested on 250 ms (gmouse.c: 'You see: ...')"),
@@ -167,6 +169,24 @@ GLOBAL_LIST = (
     Global("gReplyWin", 0x50519C, 3, "dialogue: the reply window; -1 when none"),
     Global("gOptionWin", 0x5051A0, 3, "dialogue: the options window; -1 when none"),
     Global("dialogueBackWindow", 0x50502C, 3, "dialogue: the background window; -1 when none"),
+    # What a click hits (f1/scene.py, f1/hit.py: object.cc obj_create_intersect_list, gmouse.cc object_under_mouse,
+    # tile.cc square_roof_intersect). The hit test visits the tiles of updateHexArea from the order table of the
+    # centre's parity, keeping offsets whose div < 30 and mod < 20 (rows and columns of a 640 x 480 window).
+    Global("obj_egg", 0x65F600, 3, "Object*: the see-through circle round the player (interface art 2)"),
+    Global("updateHexWidth", 0x505B74, 3, "hexes per row of the offset tables"),
+    Global("updateHexArea", 0x505B7C, 3, "entries of the order and offset tables"),
+    Global("orderTable", 0x505B80, 2, "int*[2] by the centre's parity: offset indexes sorted by offset"),
+    Global("offsetTable", 0x505B88, 2, "int*[2] by parity: tile offsets from the window's upper-left tile"),
+    Global("offsetDivTable", 0x505B90, 2, "int*: index / updateHexWidth"),
+    Global("offsetModTable", 0x505B94, 2, "int*: index % updateHexWidth"),
+    Global("show_roof", 0x50833C, 3, "bool: roofs drawn (and hit)"),
+    Global("square_y", 0x668E0C, 3, "the roof squares' camera"),
+    Global("square_x", 0x668E10, 3),
+    Global("square_offx", 0x668E14, 3),
+    Global("square_offy", 0x668E18, 3),
+    Global("squares", 0x668E3C, 3, "TileData*[3]: per elevation, 10000 squares (roof in the high 16 bits)"),
+    Global("square_length", 0x668E4C, 2),
+    Global("square_width", 0x668E50, 3),
 )
 GLOBALS = {g.name: g for g in GLOBAL_LIST}
 # LoadSaveSlotData (loadsave.h): (0x612800 - 0x6122B0) / 10 bytes; the fields as SAVE.DAT's header, the description

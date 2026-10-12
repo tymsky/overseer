@@ -20,12 +20,15 @@ from f1 import (
     dialogue,
     floats,
     geometry,
+    hit,
     inputs,
     instance,
     knowledge,
+    lof,
     nav,
     odds,
     paths,
+    scene,
     scripts,
     session,
     state,
@@ -276,6 +279,7 @@ class Actor:
         cx, cy = geometry.tile_center(tile, before.camera)
         if not self.point(cx, cy):
             return self._end(False, "cursor did not land", pre | {"cursor": [cx, cy]})
+        self.check_tile(tile, (cx, cy))
         t0 = time.monotonic()
         self.click()
         with clock.fast(self.pid):  # a test run's walk at its speed
@@ -308,6 +312,7 @@ class Actor:
         cx, cy = geometry.tile_center(tile, before.camera)
         if not self.point(cx, cy):
             return self._end(False, "cursor did not land", pre | {"cursor": [cx, cy]})
+        self.check_tile(tile, (cx, cy))
         t0 = time.monotonic()
         self.click()
         if pan and not session.camera_follows():
@@ -485,9 +490,13 @@ class Actor:
         # whole grid cost 48 s before a blind aim opened her talk (the 1x chain)
         # The grid goes out from the figure's middle, 28 px above its hex: Beth behind her counter answered at 48 px
         # up, after 19 s of points (the Hub).
-        spot = self._aim_at(
-            frozenset({critter.address}), [(cx + dx, cy + dy) for dx, dy in aims], (cx, cy - 28), budget_s=10
-        )
+        spot = self.predict(critter.address)
+        if spot is not None and self.confirm(spot, frozenset({critter.address}), "talk_to") != critter.address:
+            spot = None  # the computed point is not named (logged as a disagreement): the search as before
+        if spot is None:
+            spot = self._aim_at(
+                frozenset({critter.address}), [(cx + dx, cy + dy) for dx, dy in aims], (cx, cy - 28), budget_s=10
+            )
         if spot is not None:
             aims = [(spot[0] - cx, spot[1] - cy), *aims]
         talking = lambda: self.snap().screen == "dialogue"
@@ -540,12 +549,17 @@ class Actor:
         if targets and self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
             self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
         points = list(aims or ((0, 0), (0, -6), (0, -12), (5, -4), (-5, -4), (0, 4)))
+        predicted = None
+        if targets:  # f1.hit's computed point first: the hover after it confirms it
+            predicted = next((p for t in sorted(targets) if (p := self.predict(t)) is not None), None)
         if targets:  # then a grid round the hex, as _aim_at: two monitors drawn over the vats computer took every aim
             front = self._art_aims(tile, targets) if ART_AIMS else []
             # where a click of this kind named it last time first (Vault 15's ladder: 34-46 s of search, each run). Its
             # own memory: a spot found for a key's use cursor (GLOW2's red lift door, 6 px up) took every arrow click
             # for the whole 10 s, and the door stayed shut where it had opened in 2.5 s (the chain)
             front = [(m[0], m[1] + lift) for m in (_CLICKED.get(t) for t in targets) if m is not None] + front
+            if predicted is not None:
+                front = [(predicted[0] - cx, predicted[1] - cy + lift), *front]
             points = front + [p for p in points if p not in front]
             points += [p for p in AIM_GRID if p not in points]
         for dx, dy in points:
@@ -562,6 +576,8 @@ class Actor:
                 # 10 s, and stayed shut (the chain; one aimed click by hand opened it)
                 self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
             named = self.hovering(x, y) if targets else 0
+            if targets and (x, y) == predicted:
+                self.log.emit("aim_check", what="click_object", point=[x, y], named=named, agree=named in targets)
             if targets and named not in targets:
                 continue
             if targets:
@@ -633,6 +649,57 @@ class Actor:
         if win32.wait_for(lambda: self.mem.u32(LAST_OBJECT) != before, wait_s, 0.03):
             return self.mem.u32(LAST_OBJECT)
         return 0
+
+    # --- aim: what a click hits, computed before it (f1.hit over f1.scene) --------------------------------------------
+
+    def scene(self) -> scene.Snapshot | None:
+        """The map as the hit test sees it (None when it could not be read while the map's lists changed)."""
+        try:
+            return scene.snapshot(self.mem)
+        except ReadError:
+            return None
+
+    def predict(self, address: int, kind: int = -1, with_dude: bool = True) -> tuple[int, int] | None:
+        """f1.hit's one point to click the object at (the arrow cursor's walk; `kind` CRITTER and no player for the
+        crosshair's), None when no pixel of it is hit on this view."""
+        snap = self.scene()
+        target = snap.find(address) if snap else None
+        if target is None:
+            return None
+        a = hit.aim(target, snap, kind, with_dude)
+        self.log.emit("aim", target=address, of_kind=kind, point=a.point, pixels=a.pixels, depth=a.depth, why=a.reason)
+        return a.point
+
+    def confirm(self, point: tuple[int, int], targets: frozenset[int], what: str) -> int:
+        """The old check after the computed point: rest the arrow cursor there and read the object the engine names
+        (hovering). A disagreement is logged ("aim_check"); returns the object named (0: none or unchanged)."""
+        if self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
+            s = self.snap()
+            self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
+        named = self.hovering(*point, wait_s=0.5)
+        self.log.emit("aim_check", what=what, point=list(point), named=named, agree=named in targets)
+        return named
+
+    def check_tile(self, tile: int, point: tuple[int, int]) -> bool:
+        """After the cursor was put on a hex's point in move mode: the hex cursor's tile is the one aimed at (a
+        window over the view, or a view that moved, takes the click elsewhere). Logged when it is not."""
+        mouse = self.mem.u32(em.GLOBALS["obj_mouse_flat"].address)
+        seen = self.mem.i32(mouse + Obj.TILE) if mouse else -1
+        if seen != tile:
+            self.log.emit("aim_check", what="tile", point=list(point), wanted=tile, seen=seen, agree=False)
+        return seen == tile
+
+    def line_blocked(self, target: int) -> bool | None:
+        """f1.lof: a shot from the player at `target` is blocked by something that is no critter ("Your aim is
+        blocked."); None when the map could not be read."""
+        snap = self.scene()
+        obj = snap.find(target) if snap else None
+        if obj is None or snap.dude is None:
+            return None
+        line = lof.shot_blocked(snap, snap.dude, snap.dude.tile, obj.tile, obj)
+        self.log.emit("lof", target=target, blocked=line.blocked, critters=line.critters,
+                      obstacles=[o.address for o in line.obstacles])  # fmt: skip
+        return line.blocked
 
     def pick_up(self, tile: int, pid: int, timeout_s: float = 25.0) -> Outcome:
         """Pick up the item `pid` lying on `tile`, or take everything from the container there (the loot screen:
@@ -1439,13 +1506,22 @@ class Actor:
         cx, cy = geometry.tile_center(target.tile, s.camera)
         line = self.mem.glob("disp_start")
         blocked = lambda: "aim is blocked" in " ".join(state.messages_since(self.mem, line)).lower()
+        offsets = list(AIM_OFFSETS)
+        point = self.predict(target.address, scene.CRITTER, with_dude=False)  # the crosshair's walk
+        if point is not None:
+            offsets.insert(0, (point[0] - cx, point[1] - cy))
+        hand = self.weapon()
+        ranged = hand is not None and weapons.attack_type(hand.pid) == "ranged"
+        pre["lof_blocked"] = predicted_block = self.line_blocked(target.address) if ranged else None
         with clock.fast(self.pid):  # the swing's animation (the clicks themselves go in at 1x: clock.held)
-            for dx, dy in AIM_OFFSETS:  # the sprite stands above its hex; try a few points on it
+            for dx, dy in offsets:  # the computed point, then a few points on the sprite above its hex
                 self.point(cx + dx, cy + dy)
                 self.click()
                 if win32.wait_for(lambda: self.snap().dude.ap < s.dude.ap or blocked(), 1.0, 0.05) and not blocked():
                     break
                 if blocked():  # COMBAT.MSG 104: no other point on the target helps (a full run's rats, 34 times)
+                    self.log.emit("lof_check", target=target.address, predicted=predicted_block, game=True,
+                                  agree=predicted_block is True)  # fmt: skip
                     return self._end(False, "aim blocked", pre, "attack")
             else:
                 return self._end(False, "no swing: the clicks missed the target", pre, "attack")
@@ -1538,7 +1614,7 @@ class Actor:
                 s = self.snap()
             in_reach = [e for e in near if geometry.on_view(e.tile, s.camera, 16) and missed.get(e.address, 0) < 2]
             if spare and held and weapons.attack_type(held.pid) == "ranged":
-                kept = [e for e in in_reach if not self._spared_behind(e, spare, s)]
+                kept = [e for e in in_reach if not self._spared_behind(e, spare, s, reach)]
                 if len(kept) < len(in_reach):
                     self.log.emit("tactic", move="spare", held_back=len(in_reach) - len(kept))
                 in_reach = kept
@@ -1630,9 +1706,19 @@ class Actor:
             missed.clear()
         return self._end(False, "too many rounds", {"hp": self.snap().dude.hp}, "fight")
 
-    def _spared_behind(self, target: state.Critter, spare: frozenset[str], s: state.Snapshot) -> bool:
-        """A spared critter past `target` on the screen line from the player, within a hex of it and the weapon's
-        reach (35 hexes for a rifle: measured in hex widths of 32 px)."""
+    def _spared_behind(self, target: state.Critter, spare: frozenset[str], s: state.Snapshot, reach: int = 35) -> bool:
+        """A spared critter a missed shot at `target` could hit: on the engine's miss line (f1.lof.miss_line, the
+        exe's check_ranged_miss: from the player through the target to the weapon's reach, up to the first wall).
+        Without a readable map: the old screen-line test (within a hex of the line, up to 35 hexes past)."""
+        snap = self.scene()
+        obj = snap.find(target.address) if snap else None
+        if obj is not None and snap.dude is not None:
+            spared = {
+                o.address
+                for o in snap.objects()
+                if o.kind == scene.CRITTER and not lof.dead(o) and scripts.script_of(self.mem, o.address) in spare
+            }
+            return bool(spared) and lof.in_miss_line(snap, snap.dude, obj, reach, spared)
         x0, y0 = geometry.tile_center(s.dude.tile, s.camera)
         x1, y1 = geometry.tile_center(target.tile, s.camera)
         dx, dy = x1 - x0, y1 - y0
