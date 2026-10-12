@@ -98,3 +98,27 @@ def test_proxy_built_once(tmp_path, monkeypatch):
     monkeypatch.setattr(instance, "PROXY_BUILT", built)
     monkeypatch.setattr(instance, "build_proxy", lambda _zig=None: pytest.fail("built again"))
     assert instance.ensure_proxy() == built
+
+
+def test_another_copy_is_found_by_its_exe_and_fed_through_its_own_memory(monkeypatch, tmp_path):
+    from f1 import session, win32
+
+    copy = tmp_path / "copy" / "FALLOUTW.EXE"
+    asked = []
+    monkeypatch.setattr(win32, "pids_of", lambda exe: asked.append(exe) or [42])
+    monkeypatch.setattr(win32, "top_windows", lambda pid, visible_only=True: asked.append(visible_only) or [])
+    monkeypatch.setattr(instance, "INSTANCE_DIR", tmp_path / "instance")  # no proxy there
+    f = dinput.Feed(create=True, name=name())
+    try:
+        session.use_copy(copy, name(), headless=True)
+        assert session.game_pid() == 42 and asked[-1] == str(copy)
+        assert session.game_window(42) is None and asked[-1] is False  # a headless copy's windows are hidden
+        assert inputs.background()
+        inputs.key(0x1C, True)
+        assert f._get(dinput.KEY_HEAD) == 1  # the copy's memory took the key
+        session.use_copy(None)
+        session.game_pid()
+        assert asked[-1] == str(session.EXE_PATH) and not inputs.background()
+    finally:
+        session.use_copy(None)
+        f.close()

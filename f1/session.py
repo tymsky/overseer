@@ -91,8 +91,21 @@ class SessionError(RuntimeError):
     pass
 
 
+_copy: dict = {}  # another copy of the game the play code drives instead of the instance (use_copy)
+
+
+def use_copy(exe: Path | None, input_name: str | None = None, headless: bool = False) -> None:
+    """Point the play code at another copy of the game: the process running EXE, fed through the input memory
+    INPUT_NAME (the DINPUT.DLL proxy's), and HEADLESS when its window is never shown (it draws into memory). None:
+    back to the instance."""
+    _copy.clear()
+    if exe is not None:
+        _copy.update(exe=Path(exe), headless=headless)
+    inputs.use_copy(input_name if exe is not None else None)
+
+
 def game_pid() -> int | None:
-    pids = win32.pids_of(str(EXE_PATH))
+    pids = win32.pids_of(str(_copy.get("exe", EXE_PATH)))
     return pids[0] if pids else None
 
 
@@ -148,8 +161,8 @@ def driver_lock(what: str):
 
 
 def game_window(pid: int) -> int | None:
-    """The game's main window: its largest visible top-level window."""
-    windows = win32.top_windows(pid)
+    """The game's main window: its largest visible top-level window (a headless copy's are all hidden)."""
+    windows = win32.top_windows(pid, visible_only=not _copy.get("headless", False))
     if not windows:
         return None
     return max(windows, key=lambda h: win32.client_rect(h).width * win32.client_rect(h).height)

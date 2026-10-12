@@ -18,18 +18,27 @@ from f1.memory import GameMemory
 WM_ACTIVATEAPP = 0x001C
 DLL_NAME = "DINPUT.DLL"
 _feed: Feed | None = None
+_copy_input: str | None = None  # another copy's input memory (f1.session.use_copy)
+
+
+def use_copy(input_name: str | None) -> None:
+    """Feed another copy of the game through its proxy's memory INPUT_NAME; None: the instance's."""
+    global _feed, _copy_input
+    if _feed is not None:
+        _feed.close()
+    _feed, _copy_input = None, input_name
 
 
 def background() -> bool:
-    """The instance plays through the proxy."""
-    return (instance.INSTANCE_DIR / DLL_NAME).exists()
+    """The instance (or the copy in use) plays through the proxy."""
+    return _copy_input is not None or (instance.INSTANCE_DIR / DLL_NAME).exists()
 
 
 def feed() -> Feed:
     global _feed
     if _feed is None:
         try:
-            _feed = Feed()
+            _feed = Feed(name=_copy_input) if _copy_input else Feed()
         except FeedError as e:
             raise FeedError(f"{e}: was the game started by f1.session with the proxy in the instance?") from e
     return _feed
