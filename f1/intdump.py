@@ -108,8 +108,15 @@ def messages(list_id: int) -> dict[int, str]:
         return {}
 
 
+@cache
 def load(name: str) -> Script:
-    return Script((SCRIPTS_DIR / f"{name.upper()}.INT").read_bytes())
+    """The script NAME (e.g. "aradesh"): extracted (`extract`), else straight from the game's DATs."""
+    path = SCRIPTS_DIR / f"{name.upper()}.INT"
+    if path.exists():
+        return Script(path.read_bytes())
+    from f1.dat import GameFiles
+
+    return Script(GameFiles(knowledge.INSTANCE).read(f"SCRIPTS/{name.upper()}.INT"))
 
 
 class Expr(str):
@@ -148,8 +155,10 @@ def external_name(script: Script, e: Expr) -> str:
         return f"external({e})"
 
 
-def decompile(script: Script, proc: Procedure, end: int) -> list[str]:
-    """The procedure's statements, one line each: '0xOFFSET: statement'."""
+def decompile(script: Script, proc: Procedure, end: int, sink: list | None = None) -> list[str]:
+    """The procedure's statements, one line each: '0xOFFSET: statement'. With `sink`, its structure is appended there
+    too, for f1.talktree: ("if", offset, condition, target), ("goto", offset, target), ("call", offset, procedure)
+    and ("fn", offset, game function, its arguments as pushed: Expr, a constant's value in .value)."""
     stack: list[Expr] = []
     lines: list[str] = []
 
@@ -175,12 +184,16 @@ def decompile(script: Script, proc: Procedure, end: int) -> list[str]:
         elif op == 0x802F:  # if: the condition, then the address to go to when it is false
             cond, target = pop(), pop()
             emit(at, f"if not {cond} goto {target.value:#07x}" if isinstance(target.value, int) else f"if not {cond}")
+            if sink is not None and isinstance(target.value, int):
+                sink.append(("if", at, str(cond), target.value))
         elif op == 0x8030:
             cond, target = pop(), pop()
             emit(at, f"while {cond} else goto {target}")
         elif op == 0x8004:
             target = pop()
             emit(at, f"goto {target.value:#07x}" if isinstance(target.value, int) else f"goto {target}")
+            if sink is not None and isinstance(target.value, int):
+                sink.append(("goto", at, target.value))
         elif op == 0x8005:  # call a procedure of this script: its index, then the argument count and arguments
             index = pop()
             callee = script.procs[index.value].name if isinstance(index.value, int) else str(index)
@@ -188,6 +201,8 @@ def decompile(script: Script, proc: Procedure, end: int) -> list[str]:
             n = count.value if isinstance(count.value, int) and 0 <= count.value < 16 else 0
             args = [pop() for _ in range(n)][::-1]
             stack.append(Expr(f"{callee}({', '.join(args)})"))
+            if sink is not None:
+                sink.append(("call", at, callee))
         elif op in (0x8012, 0x8032):  # fetch a script variable / a local
             index = pop()
             stack.append(Expr(f"{'var' if op == 0x8012 else 'local'}{index}"))
@@ -228,6 +243,8 @@ def decompile(script: Script, proc: Procedure, end: int) -> list[str]:
         elif op in GAME_FUNCTIONS:
             fname, n, returns = GAME_FUNCTIONS[op]
             args = [pop() for _ in range(n)][::-1]
+            if sink is not None:
+                sink.append(("fn", at, fname, tuple(args)))
             for i, kind in NAMED_ARGS.get(fname, {}).items():
                 if i < len(args):
                     args[i] = name_arg(kind, args[i])
