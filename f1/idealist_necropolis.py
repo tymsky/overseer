@@ -48,6 +48,7 @@ PID_DEANS_ELECTRONICS = 76
 WATRSHD_SPARE_JUNK = 16658  # WATRSHD e0, sewer region C (the Cover and Sewer Hole at e1 17290, the ladder up at 15888)
 
 WATRSHD_PUMP = 12257  # WATRSHD e1, NH2OPUMP: the Junk used on it, Repair -5
+PUMP_TRIES = 30
 
 HARRY_WAIT = 14891  # 10 hexes from Harry, out of his zone (static, the plan)
 
@@ -152,8 +153,8 @@ def to_the_far_side(actor: Actor) -> bool:
 
 
 def the_pump(actor: Actor) -> bool:
-    """The Junk used on the pump: Repair -5. A plain failure keeps the parts (tried again: the game's own retry);
-    a critical failure destroys them (the spare then)."""
+    """The Junk used on the pump: Repair -5 (NH2OPUMP.INT). A plain failure keeps the parts (tried again: the game's
+    own retry, up to PUMP_TRIES: on Hard Repair is about 40 here); a critical failure destroys them (the spare then)."""
     if quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2:
         return True
     xp0 = experience(actor)
@@ -161,7 +162,7 @@ def the_pump(actor: Actor) -> bool:
     def fixed() -> bool:
         return quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2
 
-    for _ in range(8):
+    for _ in range(PUMP_TRIES):
         if not actor._count(PID_JUNK):
             break
         # beside the pump round Harry's notice (a plain walk there crossed his talk hex 14093, live);
