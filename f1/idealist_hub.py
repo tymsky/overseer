@@ -451,7 +451,7 @@ IDEALIST_HUB = [
     Step("to the Hub", lambda a: in_town(a, travel(a, "the hub", 0)), checkpoint=True, tries=6),
     Step("Fry: the Hub", fry, checkpoint=True),
     Step("downtown", lambda a: hub_map(a, "HUBDWNTN"), checkpoint=True),
-    Step("Stapleton's disk", stapletons_disk, checkpoint=True),
+    Step("Stapleton's disk", stapletons_disk, checkpoint=True, optional=True),  # 750 caps: missing, not a stop
     Step("Rutger: trade", trade.stop("Rutger"), checkpoint=True, optional=True),
     Step("Kane: trade", trade.stop("Kane"), checkpoint=True, optional=True),
     Step("Old Town", lambda a: hub_map(a, "HUBOLDTN"), checkpoint=True),

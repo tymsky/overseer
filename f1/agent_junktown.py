@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import quests, win32
+from f1 import clock, nav, quests, watchdog, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.route_support import (
     TOWN_GREETINGS,
@@ -155,17 +155,46 @@ JUNKTOWN = [
 ]
 
 
+KILLIAN_DOORS = frozenset({25690, 27483})  # JUNKKILL.MAP: the doors that run KILDOOR2 and KILDOOR1
+
+
+def locked_doors(actor: Actor) -> frozenset[int]:
+    """Killian's doors with the lock bit set (nav.obstacles); none off his map."""
+    s = actor.snap()
+    if "JUNKKILL" not in s.map_name.upper():
+        return frozenset()
+    return nav.obstacles(actor.mem, s.elevation, s.dude.address).locked & KILLIAN_DOORS
+
+
 def by_day(actor: Actor) -> bool:
     """Shops are locked at night (Killian's door), from within too: a checkpoint's rest to heal (39 h at level 5)
     left the Agent in Killian's store at 2 in the night, the way to Gizmo's casino shut (a full run). Rest
     until morning first. Killian keeps to his bed from 19:00 to 7:30 (KILLIAN.INT critter_p_proc) and walks to his
     counter after: at 6 a click on him only looked at him (twice, once at Full HD), at 8:01 he was still by
     his bed. So a morning rests until noon."""
-    ok = True
+    ok, rested = True, False
     if hour(actor) < 6 or hour(actor) >= 19:
-        ok = actor.rest("until morning").ok
+        ok, rested = actor.rest("until morning").ok, True
     if 6 <= hour(actor) < 9:
-        ok = actor.rest("until noon").ok and ok
+        ok, rested = actor.rest("until noon").ok and ok, True
+    if rested:
+        # the doors unlock only in a map update after 6:00 (KILDOOR1/2 map_update_p_proc), and a rest that ends at
+        # noon runs none: ironman runs stood locked in at noon, once after 65 game seconds more (a real minute at
+        # normal speed) and two tries 17 s apart. When the updates come is not measured: wait for the lock bits
+        # themselves, and pass short rests while they stay set; the wait is logged (`doors_unlocked`)
+        t0, m0 = actor.snap().game_time, time.monotonic()
+        watchdog.quiet(240)
+        for how in (None, "10 minutes", "30 minutes", "1 hour"):
+            if how is not None:
+                actor.rest(how)
+            with clock.fast(actor.pid):
+                if win32.wait_for(lambda: not locked_doors(actor), 45, 1.0):
+                    break
+        watchdog.unquiet()
+        actor.log.emit(
+            "doors_unlocked", ok=not locked_doors(actor), real_s=round(time.monotonic() - m0, 1),
+            game_s=(actor.snap().game_time - t0) / 10, rests=how,
+        )  # fmt: skip
     return ok
 
 

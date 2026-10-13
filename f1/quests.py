@@ -23,6 +23,7 @@ from f1 import (
     knowledge,
     light,
     lightmap,
+    lof,
     loot,
     nav,
     odds,
@@ -283,7 +284,10 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             return done("too hurt to fight on")
         target = min(left, key=lambda c: geometry.distance(c.tile, s.dude.tile))
         dist = geometry.distance(target.tile, s.dude.tile)
-        if dist <= 9 and geometry.on_view(target.tile, s.camera, 24):
+        # no fight begun where the shot is blocked: an unaware radscorpion behind a rock was never shot at, the
+        # combat over every turn and begun again on the spot (a full run: stuck, nothing moved for 60 s)
+        clear = actor.line_blocked(target.address) is not True
+        if dist <= 9 and clear and geometry.on_view(target.tile, s.camera, 24):
             # a fight takes in every foe that notices the player when it begins (f1.perception); where two
             # would, a hex that only the target notices is sought first, so that it comes alone
             others = [c for c in left if c is not target]
@@ -311,6 +315,11 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             continue
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
         goals = {t for r in (4, 5, 6) for t in geometry.ring(target.tile, r) if t not in obs.blocked}
+        if not clear:  # a hex the shot passes from, nearest first in the walk
+            scene = actor.scene()
+            if scene is not None and scene.dude is not None:
+                seen = {t for t in goals if not lof.shot_blocked(scene, scene.dude, t, target.tile, target).blocked}
+                goals = seen or goals
         _reached, why = nav.go_to(actor, goals, max_steps=4, fight=True)
         if why == "fight: refused; fled":  # a foe began a fight the gate refused: the map was left
             return done("fled a refused fight")
