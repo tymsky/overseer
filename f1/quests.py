@@ -484,7 +484,12 @@ def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: 
                     if not (alive and actor.in_combat() and actor.armed() and actor.fight().ok):  # no way out: fight
                         return actor._end(False, "could not flee an encounter", {}, "visit").reason
                 continue
-            if actor.in_combat() and not actor.fight().ok:
+            # an encounter's fight is weighed by the gate like any a foe started, and left by the edge when refused
+            # (an ironman run: radscorpions on the road to Junktown fought unweighed, death 0.29)
+            fought = actor.fight(forced=encounter) if actor.in_combat() else None
+            if fought is not None and fought.reason == "refused; fled":
+                continue
+            if fought is not None and not fought.ok:
                 s = actor.snap()
                 if s.dude is None or s.dude.hp <= 0 or s.screen == "main_menu" or not flee(actor):
                     return actor._end(False, "lost a fight on the way", {}, "visit").reason
