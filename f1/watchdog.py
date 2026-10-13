@@ -12,7 +12,7 @@ while a person uses the mouse or keyboard does not count (the agent waits for th
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from f1 import clock as game_clock
 from f1 import dialogue, session, state, win32
@@ -28,6 +28,7 @@ LIMITS = {
     "pipboy": 30, "loadsave": 20, "options": 20, "preferences": 20, "skilldex": 20, "elevator": 20,
     "called_shot": 20, "main_menu": 60, "select_character": 30, "none": 30,
 }  # fmt: skip
+SEEN_MAX = 2000  # looks kept (a long walk is all new ones)
 UNNAMED_LIMIT = 5  # a message box no module claims (fail fast: 20 s held a refused rest's box)
 CLOCK_JUMP = 100  # game ticks (0.1 s) between two looks a second apart: a rest or a trip, not the clock's run
 PERIOD_S = 1.0
@@ -117,6 +118,12 @@ class Tracker:
     last: tuple | None = None
     since: float = 0.0
     clock: int | None = None
+    seen: set = field(default_factory=set)  # the looks since the last reset: progress is a look not among them
+
+    def reset(self, now: float) -> None:
+        """Movement the look cannot see (a map loading, a wait the route asked for): a fresh start."""
+        self.last, self.since = None, now
+        self.seen.clear()
 
     def update(
         self, look: tuple, screen: str, clock: int, now: float, owner_active: bool, speed: float = 1.0
@@ -124,7 +131,15 @@ class Tracker:
         # a faster clock (f1.clock) runs the game's time up to `speed` times as fast: its own run is no jump
         jumped = self.clock is not None and clock - self.clock > CLOCK_JUMP * max(1.0, speed)
         self.clock = clock
-        if owner_active or jumped or look != self.last:
+        if owner_active or jumped:
+            self.seen.clear()
+        if owner_active or jumped or look not in self.seen:
+            # a look seen before is no progress: a route that steps to and fro (a door a dweller keeps open, opened
+            # again and again, the player's tile and the last line taking turns) went on for minutes while every look
+            # differed from the one before it
+            if len(self.seen) >= SEEN_MAX:
+                self.seen.clear()
+            self.seen.add(look)
             self.last, self.since = look, now
             return None
         limit = limit_for(screen)
@@ -183,16 +198,16 @@ class Watchdog(threading.Thread):
                         gone = True
                         _trip("the game is gone")
                         self.log.emit("stuck", screen=None, why="the game is gone")
-                    tracker.last, tracker.since = None, time.monotonic()  # a map loading: that is movement
+                    tracker.reset(time.monotonic())  # a map loading: that is movement
                     continue
                 except (ValueError, KeyError, IndexError, AttributeError) as e:  # a bug in the look: said once
                     if repr(e) not in errors:
                         errors.add(repr(e))
                         self.log.emit("watchdog_error", error=repr(e)[:300])
-                    tracker.last, tracker.since = None, time.monotonic()
+                    tracker.reset(time.monotonic())
                     continue
                 if time.monotonic() < _quiet_until:  # a wait the route asked for: still is not stuck
-                    tracker.last, tracker.since = None, time.monotonic()
+                    tracker.reset(time.monotonic())
                     continue
                 speed = game_clock.speed_of(mem)
                 why = tracker.update(view, screen, clock, time.monotonic(), guard.owner_idle_for() > 0, speed)

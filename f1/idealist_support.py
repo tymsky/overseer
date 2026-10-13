@@ -1,8 +1,9 @@
 """Shared Idealist measurements, inventory tasks and timed rest."""
 
+import time
 from collections.abc import Callable
 
-from f1 import geometry, loot, nav, quests, scripts, world
+from f1 import geometry, loot, nav, quests, scripts, watchdog, world
 from f1.actions import Actor
 from f1.engine_map import Obj
 from f1.route_support import (
@@ -56,14 +57,26 @@ def the_floor(actor: Actor) -> bool:
     return True
 
 
-def beside(actor: Actor, tile: int) -> bool:
+def beside(actor: Actor, tile: int, tries: int = 5, pause: float = 5.0) -> bool:
     """Onto a free hex next to `tile`. The engine's own walk to an object can fail where ours does not: Science on
     the library's computer at 17533 from two hexes away answered that it could not be reached every time, and from the
-    hex beside it (17534) it worked."""
-    s = actor.snap()
-    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-    free = {t for t in geometry.ring(tile, 1) if t not in obs.blocked}
-    return s.dude.tile in free or (bool(free) and nav.go_to(actor, free, max_steps=80)[0])
+    hex beside it (17534) it worked. A walk that finds no way is tried again after `pause`, the obstacles read anew:
+    on a new game's day 1 the walk found no path twice (from 22140 and 17731) and the run ended there, while from the
+    same start another time it arrived (17312 to 17534): something on the way that moves (not measured: the dwellers
+    walk that floor). A second run: the walk found no path three times in 30 s (a dweller stood in the door at 21924,
+    capture) and the engine's walk then went round to 17731 and failed: up to five tries, 5 s apart."""
+    for attempt in range(tries):
+        if attempt:  # the dwellers move on: a wait of the route's choosing, not a stuck game
+            watchdog.quiet(pause + 20)
+            time.sleep(pause)
+        s = actor.snap()
+        obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
+        free = {t for t in geometry.ring(tile, 1) if t not in obs.blocked}
+        if s.dude.tile in free or (free and nav.go_to(actor, free, max_steps=80)[0]):
+            watchdog.unquiet()
+            return True
+    watchdog.unquiet()
+    return False
 
 
 def read_book(actor: Actor, pid: int) -> bool:

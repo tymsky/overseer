@@ -43,6 +43,7 @@ from f1.route_support import (
 
 PID_ANTIDOTE, PID_SCOUT_HANDBOOK, PID_SCORPION_TAIL = 49, 86, 92
 
+RATIONS = (7, 9)  # WTRGRD.INT: the water line's hours, the corridor to the library full
 LIBRARY_COMPUTERS = (17533, 21134)  # VAULT13 e2, LIBCOMP.INT: Science on one rolls IN (1d10 <= 10): 350 XP, 6 h
 
 BOOKSHELF_SHADYW, BOOKCASE_SHADYE = 15931, 13097  # unscripted containers, a Scout Handbook each (SHADYE: and a Rope)
@@ -116,7 +117,13 @@ def library(actor: Actor) -> bool:
     information." with the XP (its do_check(IN) passes at IN 10), or LIBCOMP.MSG 104 when that check
     fails; a computer used before, LIBCOMP.MSG 102. Every one of those ends it: the lines since the
     use, joined (the box wraps them), are read for them. Read three lines back only, the answer after the fade was
-    missed and a run skipped the step."""
+    missed and a run skipped the step.
+
+    The water line comes first: WTRGRD.INT hands out the rations from 07:00 to 09:00 (game_time_hour > 700 and
+    < 900) and the dwellers queue in the corridor to the library; a new game starts inside that window, and three
+    ironman runs found no way past the queue (a capture: "Here's your ration for today", the corridor full), a
+    fourth got through on the walk round by the south door. Resting it away is refused on day 1 in the vault (the
+    Pip-Boy's clock did not open: "no Pip-Boy", live)."""
     for tile in LIBRARY_COMPUTERS:
         xp0, n0 = experience(actor), actor.mem.glob("disp_start")
 

@@ -110,3 +110,10 @@ def test_a_game_that_is_gone_trips_once(monkeypatch: pytest.MonkeyPatch) -> None
     assert log.events == [("stuck", {"screen": None, "why": "the game is gone"})]
     with pytest.raises(watchdog.Stuck, match="gone"):
         watchdog.check()
+
+
+def test_a_route_stepping_to_and_fro_is_stuck() -> None:
+    """The ironman run at Vault 13's library: a door a dweller kept open was opened again and again, the player's
+    tile and the last line taking turns; each look differed from the one before and nothing tripped for minutes."""
+    assert feed(Tracker(), [("door", 22124), ("door", 21724)] * 60) == [92]  # the second look was new
+    assert feed(Tracker(), [("walk", t) for t in range(150)]) == []  # a long walk: every look new
