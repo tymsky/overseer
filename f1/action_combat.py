@@ -189,6 +189,8 @@ class CombatActions:
             drew = True
             if self.holster(False):
                 return True, self.weapon(), drew
+            if self.pick_up_dropped(s):  # the draw comes next, with the picked-up weapon among the pack's
+                return True, self.weapon(), False
             options = self.weapon_options()
             if options and options[0].pid is not None and s.dude.ap >= INVENTORY_AP and self.ready_weapon().ok:
                 return True, self.weapon(), drew
@@ -202,6 +204,26 @@ class CombatActions:
                 if self.holster(True):
                     held = None
         return False, held, drew
+
+    def pick_up_dropped(self, s: state.Snapshot) -> bool:
+        """A weapon lying on or beside the player's hex back into the pack: a critical miss drops the one in hand
+        there. Measured: in the radscorpion caves the 10mm pistol dropped, the next fight was fought with the Knife
+        from the pack, and in melee the player stood in Ian's line of fire (hit instead of the radscorpion, dead).
+        One pick per empty hand; a failed one leaves the pack's best."""
+        from f1 import world
+
+        lying = [
+            t
+            for t in world.things(self.mem)
+            if t.type == "item"
+            and t.elevation == s.elevation
+            and weapons.weapon(t.pid) is not None
+            and geometry.distance(t.tile, s.dude.tile) <= 1
+        ]
+        if not lying:
+            return False
+        dropped = min(lying, key=lambda t: geometry.distance(t.tile, s.dude.tile))
+        return self.pick_up(dropped.tile, dropped.pid, timeout_s=8.0).ok
 
     def forced_group(self) -> tuple[list[state.Critter], list[state.Critter]]:
         """A fight a foe started: its foes as the gate chooses them (those who notice the player, else the nearest)
