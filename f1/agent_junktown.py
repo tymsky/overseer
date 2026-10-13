@@ -91,7 +91,6 @@ def kenji(actor: Actor) -> bool:
     if fought:
         actor.fight(only=("Kenji",))
     time.sleep(1.5)
-    actor.log.emit("kenji", fought=fought, hurt_by_player=quests.mvar(actor, 2))  # map_var(2): Killian47's offer
     settle(actor, KILLIAN_JOB)  # Killian speaks up after the fight and offers the job (a chain run)
     return fought and quests.find_critter(actor, "Kenji") is None and not actor.in_combat()
 
