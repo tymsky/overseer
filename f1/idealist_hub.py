@@ -90,6 +90,7 @@ def hub_map(actor: Actor, name: str) -> bool:
 CIRCLE_STAIRS = "thfu2d"
 
 CIRCLE_DOORS = (19482, 22684, 25882)
+DOOR_TRIES, DOOR_JAMS = 30, 3
 
 LOXLEY_TEST = ["#108/114/174", "#167", "#127", "#131"]
 
@@ -121,7 +122,8 @@ def into_the_circle(actor: Actor) -> bool:
 
 def circle_doors(actor: Actor) -> bool:
     """The three doors on the way to Loxley unlocked by the Lockpick skill, tried again in place (the game's own
-    retry; a jam ends it)."""
+    retry) until the lock gives: on Hard the bare skill is about a third a roll, and a try costs only time. A jam
+    (a critical failure) is waited out, up to DOOR_JAMS times."""
     for tile in CIRCLE_DOORS:
         door = door_at(actor, tile)
         if door is None or not locked(actor, door):
@@ -129,24 +131,25 @@ def circle_doors(actor: Actor) -> bool:
         beside(actor, tile)
         # DOOR.INT's unlock message (DOOR.MSG 100) only sets its local_var(0); the engine's lock bit goes at the next use,
         # which opens it (routes.pick_lock): so the door is used first, and picked only when that does not open it
-        if not nav.open_door(actor, tile):
-            pick_lock(actor, tile, door.address, tries=8)
-            if not nav.open_door(actor, tile):
-                # a critical failure jams the lock (the jammed-lock message, the 1x chain) until midnight
-                # (CE scripts.c gtime_q_process: obj_unjam_all_locks): a rest past it, and the skill again
-                # midnight unjams only the map loaded then, and neither the Circle nor Old Town offers a rest (no rest
-                # buttons, live); the other way (CE map.c): a map re-entered 24 hours after it was left unjams them
-                actor.log.emit("circle_door", tile=tile, why="jammed: 25 hours away in Downtown")
-                hub_map(actor, "HUBDWNTN")
-                until = actor.snap().game_time + DAY + DAY // 24
-                for _ in range(8):
-                    if actor.snap().game_time >= until or not actor.rest("6 hours").ok:
-                        break
-                hub_map(actor, "HUBOLDTN")
-                into_the_circle(actor)
-                beside(actor, tile)
-                pick_lock(actor, tile, door.address, tries=8)
-                nav.open_door(actor, tile)
+        for jams in range(DOOR_JAMS + 1):
+            if nav.open_door(actor, tile):
+                break
+            pick_lock(actor, tile, door.address, tries=DOOR_TRIES)
+            if nav.open_door(actor, tile) or jams == DOOR_JAMS:
+                break
+            # a critical failure jams the lock (the jammed-lock message, the 1x chain) until midnight
+            # (CE scripts.c gtime_q_process: obj_unjam_all_locks): a rest past it, and the skill again
+            # midnight unjams only the map loaded then, and neither the Circle nor Old Town offers a rest (no rest
+            # buttons, live); the other way (CE map.c): a map re-entered 24 hours after it was left unjams them
+            actor.log.emit("circle_door", tile=tile, why="jammed: 25 hours away in Downtown")
+            hub_map(actor, "HUBDWNTN")
+            until = actor.snap().game_time + DAY + DAY // 24
+            for _ in range(8):
+                if actor.snap().game_time >= until or not actor.rest("6 hours").ok:
+                    break
+            hub_map(actor, "HUBOLDTN")
+            into_the_circle(actor)
+            beside(actor, tile)
         actor.log.emit("circle_door", tile=tile, locked=locked(actor, door))
         if locked(actor, door):
             return False
@@ -183,6 +186,13 @@ LEON_PASS = ["#102", "#106"]  # HTWRLEON.MSG 102 (Speech 0), 106
 HIGHTOWER_BYE = ["@104"]  # HIGHTOWR.MSG 104, the player's name, 105: Daren04, shown out
 
 BOX_ENDS = (107, 106, 108, 109)  # HTWRBOX.MSG: unlocked, already unlocked, the trap, the lock jammed
+# HTWRBOX.INT use_skill_on_p_proc (f1.intdump): only local_var(0), the box unlocked, stops a try; a jam (a critical
+# failure, jam_lock) is never checked there, and the trap goes off once, at the third try (local_var(1)). So the lock
+# is tried until it opens: at Lockpick -20 a try is about 11 % on Hard for the Idealist (31 shown), and the six tries
+# that stopped at the trap or a jam failed nearly always; 30 tries open it about 97 % of the time. (That the engine
+# lets the script run on a jammed lock is read from the script, not measured.)
+BOX_OPEN = (107, 106)
+BOX_TRIES = 30
 
 
 HIGHTOWERS_HEX = (
@@ -260,7 +270,8 @@ def the_necklace(actor: Actor) -> bool:
         return False
     box = next((t for t in world.things(actor.mem) if t.tile == HEIGHTS_BOX and t.type != "critter"), None)
     targets = frozenset({box.address}) if box else frozenset()
-    for _ in range(6):
+    for _ in range(BOX_TRIES):
+        heal_below(actor, 40)  # the trap at the third try: 6-36 damage
         n0 = actor.mem.glob("disp_start")
         # the lock's own answer: the aim's hovers print the box's look-at line too, and that ended each try
         # before its click had answered (three tries, 33 s each, the 1x chain)
@@ -272,7 +283,7 @@ def the_necklace(actor: Actor) -> bool:
         win32.wait_for(answered, 3, 0.1)
         text = said()
         actor.log.emit("strongbox", said=text[-160:])
-        if any(dialogue.holds(text, "htwrbox", n) for n in BOX_ENDS):
+        if any(dialogue.holds(text, "htwrbox", n) for n in BOX_OPEN):
             break
     return loot_the_box(actor)
 
