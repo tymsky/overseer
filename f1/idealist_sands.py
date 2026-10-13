@@ -407,9 +407,17 @@ SETH_BACK_TO_CAVES = ["#115", "#118", "#126"]
 
 
 def back_to_the_caves(actor: Actor) -> bool:
-    """Seth to the caves, with the dynamite; without it (Vault 15 gave none) the trip is not made."""
-    if on_map(actor, "CAVES") or not actor._count(PID_DYNAMITE):
+    """Seth to the caves, with the dynamite; without it (Vault 15 gave none: its lower floors refused by the gate)
+    still for the radscorpions left, by his first trip's talk (agent_sands.into_the_caves). Skipped, they stayed,
+    SHADYWST never took Tandi (RADSCORPION_SEED 2) and her reward was missing for Mrs. Stapleton's 750 caps: all four
+    lanes of an ironman run stood there."""
+    if on_map(actor, "CAVES"):
         return True
+    if not actor._count(PID_DYNAMITE):
+        if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0:
+            return True
+        into_the_caves(actor)
+        return on_map(actor, "CAVES")
     if not on_map(actor, "SHADYW"):
         quests.take_exit(actor, "SHADYW")
     actor.holster(True)
