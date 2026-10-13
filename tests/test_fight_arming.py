@@ -27,6 +27,7 @@ def bare_actor(monkeypatch, ap: int = 6) -> actions.Actor:
     a.calls = []
     a.snap_ = SimpleNamespace(dude=SimpleNamespace(ap=ap, tile=100, hp=40), screen="map")
     a.snap = lambda: a.snap_
+    a.pick_up_dropped = lambda s: False
     monkeypatch.setattr(win32, "wait_for", lambda cond, *x, **k: cond())
     return a
 
@@ -53,6 +54,18 @@ def test_a_weapon_dropped_by_a_critical_miss_is_replaced_from_the_pack(monkeypat
     # once a fight: the next turn punches if the draw failed
     a.calls.clear()
     assert a.rearm(a.snap(), None, True) == (False, None, True) and a.calls == []
+
+
+def test_a_dropped_pistol_is_picked_up_before_the_pack_is_drawn_from(monkeypatch) -> None:
+    """The measured case with Ian: the pistol dropped and lay on the player's hex; the Knife from the pack put the
+    player in melee, in Ian's line of fire. Picked up first, the draw comes on the next pass (`drew` stays False)."""
+    a = bare_actor(monkeypatch)
+    a.holster = lambda on=True: a.calls.append(("holster", on)) or False
+    a.weapon = lambda: None
+    a.pick_up_dropped = lambda s: a.calls.append(("pick",)) or True
+    a.ready_weapon = lambda: (_ for _ in ()).throw(AssertionError("the pack before the floor"))
+    assert a.rearm(a.snap(), None, False) == (True, None, False)
+    assert a.calls == [("holster", False), ("pick",)]
 
 
 def test_fists_best_or_too_few_ap_punch_without_the_inventory(monkeypatch) -> None:

@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import dialogue, geometry, knowledge, loot, nav, quests, session, state, trade, win32, world
+from f1 import dialogue, geometry, knowledge, loot, nav, quests, session, state, trade, watchdog, win32, world
 from f1.actions import Actor
 from f1.agent_military import (
     pick_lock,
@@ -134,7 +134,13 @@ def circle_doors(actor: Actor) -> bool:
         for jams in range(DOOR_JAMS + 1):
             if nav.open_door(actor, tile):
                 break
-            pick_lock(actor, tile, door.address, tries=DOOR_TRIES)
+            # each failed try leaves the same look (the same line in the message box): the watchdog's minute would
+            # end a run of unlucky rolls that are the game's own retry; quiet for the tries' time (about 4 s each)
+            watchdog.quiet(DOOR_TRIES * 6)
+            try:
+                pick_lock(actor, tile, door.address, tries=DOOR_TRIES)
+            finally:
+                watchdog.unquiet()
             if nav.open_door(actor, tile) or jams == DOOR_JAMS:
                 break
             # a critical failure jams the lock (the jammed-lock message, the 1x chain) until midnight
@@ -149,6 +155,9 @@ def circle_doors(actor: Actor) -> bool:
                     break
             hub_map(actor, "HUBOLDTN")
             into_the_circle(actor)
+            # the map loaded anew: its objects too. The old door's address named nothing and every pick after the
+            # trip was aimed blind, 45 s a try, until the watchdog ended the run (live)
+            door = door_at(actor, tile) or door
             beside(actor, tile)
         actor.log.emit("circle_door", tile=tile, locked=locked(actor, door))
         if locked(actor, door):
