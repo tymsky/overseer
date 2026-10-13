@@ -269,6 +269,28 @@ def edge_step(at: int, goal: int, cam: geometry.Camera, blocked: frozenset[int],
     return best[1] if best else None
 
 
+def aside_tile(at: int, mates: set[int], blocked: frozenset[int], far: int = 4) -> int | None:
+    """A hex FAR steps from AT, reachable round BLOCKED in a few more, as far from the companions on MATES as there
+    is: the player steps back there, and a companion standing in the only way follows him out of it."""
+    ring = [t for t in geometry.ring(at, far) if 0 <= t < 40000 and t not in blocked]
+    for t in sorted(ring, key=lambda t: -min(geometry.distance(t, m) for m in mates)):
+        path = astar(at, {t}, blocked, limit=600)
+        if path is not None and len(path) - 1 <= far + 2:
+            return t
+    return None
+
+
+def mates_in_the_way(actor, at: int, goals: set[int], blocked: frozenset[int]) -> set[int]:
+    """The companions' hexes when they alone stand between AT and GOALS (a way opens without them)."""
+    dude = actor.snap().dude
+    mates = {
+        c.tile
+        for c in state.critters(actor.mem)
+        if c.team == dude.team and c.address != dude.address and not c.dead and c.elevation == dude.elevation
+    }
+    return mates if mates and astar(at, goals, blocked - mates) is not None else set()
+
+
 def go_to(
     actor, goals: set[int], max_steps: int = 80, fight=True, avoid: frozenset[int] = frozenset()
 ) -> tuple[bool, str]:
@@ -312,6 +334,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
     misses: dict[tuple[int, int], int] = {}
     clamped: set[int] = set()  # where Home could not centre the view (a map's edge)
     homed: set[int] = set()  # where the player was off the view and Home was pressed
+    asides = 0  # steps back to let a companion out of the only way
     for step in range(max_steps):
         s = actor.snap()
         if s.screen != "map" or s.map_name != start_map:
@@ -365,6 +388,19 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
             path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
             if path is not None:
                 break
+        mates: set[int] = set()
+        if path is None and asides < 2:
+            mates = mates_in_the_way(actor, s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
+        if mates:
+            # a companion stands in the only way and waits there for the player (Ian in a doorway of the Watershed,
+            # an ironman run: no path for 60 s, the run stopped): step back from him, he follows out of it
+            asides += 1
+            aside = aside_tile(s.dude.tile, mates, obs.passable_doors | refused | avoid)
+            actor.log.emit("make_way", at=s.dude.tile, mates=sorted(mates), to=aside)
+            if aside is not None:
+                actor.walk_to(aside, timeout_s=10)
+                actor.companions_settle(4.0)
+                continue
         if path is None:
             return False, "no path"
         if not plan:

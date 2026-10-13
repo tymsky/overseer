@@ -80,3 +80,21 @@ def test_use_elevator_goes_to_the_level_on_its_key(monkeypatch):
     assert not quests.use_elevator(actor, "3") and len(goals) == 1
     assert quests.take_exit(actor, "vault13.map") and goals[-1] == "VAULT13"
     assert quests.leave_map(actor) and goals[-1] == "WORLD MAP"
+
+
+def test_a_companion_in_the_only_way_is_stepped_away_from(monkeypatch):
+    # a wall along column 100 with one gap, the companion in it: the way opens only without him, and the player
+    # steps back four hexes, away from him (Ian in a doorway of the Watershed, an ironman run)
+    player, mate, goal = 100 * 200 + 99, 100 * 200 + 100, 100 * 200 + 105
+    blocked = frozenset({y * 200 + 100 for y in range(200)})
+    dude = SimpleNamespace(team=0, address=1, elevation=0, tile=player, dead=False)
+    ian = SimpleNamespace(team=0, address=2, elevation=0, tile=mate, dead=False)
+    actor = SimpleNamespace(mem=None, snap=lambda: SimpleNamespace(dude=dude))
+    monkeypatch.setattr(nav.state, "critters", lambda mem: [dude, ian])
+    assert nav.astar(player, {goal}, blocked) is None
+    assert nav.mates_in_the_way(actor, player, {goal}, blocked) == {mate}
+    aside = nav.aside_tile(player, {mate}, blocked)
+    assert nav.geometry.distance(player, aside) == 4
+    assert nav.geometry.distance(aside, mate) > nav.geometry.distance(player, mate)
+    ian.team = 1  # not a companion: nothing to step away from
+    assert nav.mates_in_the_way(actor, player, {goal}, blocked) == set()
