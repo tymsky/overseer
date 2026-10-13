@@ -1,6 +1,7 @@
 """Idealist route tasks for vault15."""
 
-from f1 import geometry, loot, nav, quests, win32, world, worldmap
+from f1 import geometry, knowledge, loot, nav, quests, win32, world, worldmap
+from f1.action_combat import HOSTILE_EXACT, HOSTILE_KINDS
 from f1.actions import Actor
 from f1.idealist_support import (
     DAY,
@@ -47,6 +48,8 @@ V15_RUBBLE = ((23099, 6), (22701, 8))
 
 V15_LADDER_UP = 20519
 
+V15_ARRIVAL = {1: 23118, 2: 17108}  # where a shaft down sets the player on the floor below
+
 _left_shady: int | None = None  # the game time Shady Sands was left (unset since Vault 15 waits: rested out)
 
 
@@ -92,6 +95,8 @@ def v15_lockers(actor: Actor) -> bool:
     """This floor's lockers emptied (the rope and the dynamite matter; loot.sweep might leave a rope as not worth
     it), then whatever else is worth it on the floor. Fails while a locker still holds what the way on needs: e1's
     rope, e2's dynamite (a fight had kept e1's locker shut)."""
+    if actor.v15_floor_left and actor.snap().elevation != 2:
+        return True  # e2 left (floor_refused): its lockers with it
     e = actor.snap().elevation
     for tile in V15_LOCKERS.get(e, ()):
         beside(actor, tile)
@@ -109,12 +114,35 @@ def shaft_needs_rope(actor: Actor, tile: int) -> bool:
     return shaft is not None and shaft.pid != PID_ROPED_SHAFT
 
 
+def floor_refused(actor: Actor, elevation: int, arrival: int) -> bool:
+    """The gate on a whole floor before going down to it: every hostile critter there as one fight from the shaft's
+    foot (the rubble's fight on e2 began with 2 rats in the gate's numbers and drew about 20 of the floor's, all 7
+    stimpaks gone and HP 3 with no exit: an ironman run). True when the gate refuses it: the floor waits."""
+    from f1 import odds, risk, state
+
+    floor = [
+        c for c in state.critters(actor.mem)
+        if c.elevation == elevation and not c.dead and c.hp > 0
+        and (any(k in knowledge.proto_name(c.pid) for k in HOSTILE_KINDS) or knowledge.proto_name(c.pid) in HOSTILE_EXACT)
+    ]  # fmt: skip
+    if not floor:
+        return False
+    r = risk.against(actor, floor, at=arrival)
+    o = risk.as_odds(r)
+    actor.log.emit("v15_floor", elevation=elevation, foes=len(floor), win=round(o.win, 3),
+                   death_high=o.death_high, accept=odds.accepted(o, 0.0))  # fmt: skip
+    return not odds.accepted(o, 0.0)
+
+
 def v15_down(actor: Actor) -> bool:
-    """A rope on this floor's shaft, then down it."""
+    """A rope on this floor's shaft, then down it; the floor below only when the gate takes its whole population."""
     s = actor.snap()
     if s.elevation not in V15_SHAFTS_DOWN:
-        return s.elevation == 2
+        return s.elevation == 2 or actor.v15_floor_left
     shaft, below = V15_SHAFTS_DOWN[s.elevation]
+    if below == 2 and floor_refused(actor, below, V15_ARRIVAL[below]):
+        actor.v15_floor_left = True  # the rubble and e2's lockers are left: up and out from here
+        return True
     if shaft_needs_rope(actor, shaft) and actor._count(PID_ROPE) == 0:
         actor.log.emit("v15", why="no rope", elevation=s.elevation)
         return False
@@ -150,6 +178,8 @@ def v15_up(actor: Actor) -> bool:
 
 def the_rubble(actor: Actor) -> bool:
     """Into both RUBCHIP triggers on e2: 500 XP each, once."""
+    if actor.v15_floor_left and actor.snap().elevation != 2:
+        return True
     xp0 = experience(actor)
     for centre, radius in V15_RUBBLE:
         s = actor.snap()

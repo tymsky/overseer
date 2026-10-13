@@ -752,14 +752,17 @@ def foe(pid: int, dist: int, hp: int | None = None, packet: int | None = None, h
     )  # fmt: skip
 
 
-def against(actor, foes: list, others: list = ()) -> Risk:  # type: ignore[assignment]
+def against(actor, foes: list, others: list = (), at: int | None = None) -> Risk:  # type: ignore[assignment]
     """The risk of the player's best way to fight (weapons.choose) against these live critters, from where they stand
-    now; OTHERS (hostile critters not in the fight yet) join at the first round's end when they notice the player or
-    the first foe (combatai.c combatai_notify_onlookers, is_within_perception at combat's distances)."""
+    now (and the player at his tile, or AT: where he will arrive); OTHERS (hostile critters not in the fight yet)
+    join at the first round's end when they notice the player or the first foe (combatai.c
+    combatai_notify_onlookers, is_within_perception at combat's distances).
+    """
     from f1 import geometry, loot, perception, weapons
     from f1.engine_map import Obj
 
     mem, s = actor.mem, actor.snap()
+    here = s.dude.tile if at is None else at
     st = odds.player_stats(mem)
     options = actor.weapon_options()
     o = options[0] if options else None
@@ -789,7 +792,7 @@ def against(actor, foes: list, others: list = ()) -> Risk:  # type: ignore[assig
                 if weapons.fits(held, ipid)
             )
         return foe(
-            c.pid, geometry.distance(c.tile, s.dude.tile) - (1 if c.multihex else 0), hp=c.hp,
+            c.pid, geometry.distance(c.tile, here) - (1 if c.multihex else 0), hp=c.hp,
             packet=mem.i32(c.address + Obj.CRITTER_AI_PACKET), held=held, loaded=loaded, spare=spare, joins=joins,
             big=c.multihex, light=odds.visible_light(mem, c.elevation, c.tile), ap_left=max(0, c.ap),
         )  # fmt: skip
@@ -798,7 +801,7 @@ def against(actor, foes: list, others: list = ()) -> Risk:  # type: ignore[assig
     them = [live(c, 0) for c in foes]
     for c in others:
         pe = perception.perception_of(c.pid)
-        sees = perception.notices(c.tile, c.rotation, pe, s.dude.tile, in_combat=True) or (
+        sees = perception.notices(c.tile, c.rotation, pe, here, in_combat=True) or (
             first is not None and perception.notices(c.tile, c.rotation, pe, first.tile, in_combat=True)
         )
         them.append(live(c, 1 if sees else None))
