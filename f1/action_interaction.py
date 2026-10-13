@@ -91,6 +91,7 @@ class InteractionActions:
         # whole grid cost 48 s before a blind aim opened her talk (the 1x chain)
         # The grid goes out from the figure's middle, 28 px above its hex: Beth behind her counter answered at 48 px
         # up, after 19 s of points (the Hub).
+        self.companions_settle()
         spot = self.predict(critter.address)
         if spot is not None and self.confirm(spot, frozenset({critter.address}), "talk_to") != critter.address:
             spot = None  # the computed point is not named (logged as a disagreement): the search as before
@@ -147,6 +148,8 @@ class InteractionActions:
         if not geometry.on_view(tile, s.camera, 48):
             nav.scroll_towards(self, tile)
             s = self.snap()
+        if targets:  # Vault 15's ladder, an ironman run: Ian walked up as the named point was clicked, and his talk
+            self.companions_settle()  # opened instead (60 s in it, stuck)
         cx, cy = geometry.tile_center(tile, s.camera)
         end = time.monotonic() + timeout_s
         if targets and self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
@@ -333,8 +336,8 @@ class InteractionActions:
 
     def companions_settle(self, timeout_s: float = 3.0) -> None:
         """Wait (at most `timeout_s`) until no companion moves: one following the player walks up after he stops, and
-        a use aimed at a target meanwhile lands on him (an ironman run: Ian stepped by Jarvis's bed as the Antidote's
-        click came, the Antidote was gone and Jarvis not cured)."""
+        a click aimed at a target meanwhile lands on him (ironman runs: Ian stepped by Jarvis's bed as the Antidote's
+        click came, the Antidote was gone and Jarvis not cured; Vault 15's ladder opened Ian's talk)."""
 
         def tiles() -> dict[int, int]:
             dude = self.snap().dude
