@@ -226,8 +226,11 @@ def the_rest_of_the_caves(actor: Actor) -> bool:
 
 
 def scorpion_tail(actor: Actor) -> bool:
-    """A Scorpion Tail from a radscorpion's body (each of the nine carries one), for Razlo's antidote."""
+    """A Scorpion Tail from a radscorpion's body (each of the nine carries one), for Razlo's antidote. A fight a foe
+    began after the hunt (on the sweep for the floor's loot) and the gate refused was fled out: back in first."""
     if not actor._count(PID_SCORPION_TAIL):
+        if not on_map(actor, "CAVES"):
+            into_the_caves(actor)
         quests.loot_the_dead(actor, ("Radscorpion",), max_bodies=1)
     return actor._count(PID_SCORPION_TAIL) > 0
 
@@ -446,7 +449,8 @@ IDEALIST_START = [
     Step("Razlo's antidote", razlo_antidote, checkpoint=True),
     Step("Jarvis cured", jarvis, checkpoint=True),
     Step("to Shady Sands East", lambda a: quests.take_exit(a, "SHADYE")),
-    Step("Curtis's crop rotation", curtis, checkpoint=True),
+    # a Science check (the option shows only above its bound): on Hard, -10 to every non-combat skill, it did not show
+    Step("Curtis's crop rotation", curtis, checkpoint=True, tries=1, optional=True),
     Step("a Scout Handbook (East)", lambda a: book_from(a, BOOKCASE_SHADYE)),
     # the days away that SHADYWST.INT wants before it takes Tandi are spent in Vault 15
     *VAULT_15,
