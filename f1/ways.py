@@ -277,6 +277,7 @@ def door_way(actor, goal: int, walls: doors.Walls | None = None, log=None) -> tu
 
 
 DOORS_ON_A_WAY = 8
+CROWD_WAITS = 8  # tries 2 s apart while no way is found: a critter in the only way moves on
 
 
 def open_way(actor, goal: int, walls: doors.Walls) -> bool:
@@ -305,6 +306,19 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
         if path is None and open_way(actor, goal, walls):
             # the engine's search stops at 2000 nodes: from Shady Sands West's east edge to its exit 7106 a walk round
             # the walls is longer (an ironman run stood there, the way refused twice); nav.go_to walks it in legs
+            return Result(
+                True, "no closed door on a way past the engine's search", {"opened": opened, "walled": walled}
+            )
+        for _ in range(CROWD_WAITS if path is None else 0):
+            # someone stands in the only way (Shady Sands East, an ironman run: in the Scout Handbook's house, a
+            # villager by the inner doorway; the step and its retry failed within 1.2 s and the run counted as
+            # stuck, while from the same tile another run walked out): they wander on, wait for it
+            time.sleep(2.0)
+            path, shut = door_way(actor, goal, walls, log)
+            if path is not None or open_way(actor, goal, walls):
+                (log or actor.log.emit)("milestone", what="the way cleared", tile=actor.snap().dude.tile)
+                break
+        if path is None and open_way(actor, goal, walls):
             return Result(
                 True, "no closed door on a way past the engine's search", {"opened": opened, "walled": walled}
             )
