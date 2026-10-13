@@ -331,6 +331,27 @@ class InteractionActions:
                 return x, y
         return None
 
+    def companions_settle(self, timeout_s: float = 3.0) -> None:
+        """Wait (at most `timeout_s`) until no companion moves: one following the player walks up after he stops, and
+        a use aimed at a target meanwhile lands on him (an ironman run: Ian stepped by Jarvis's bed as the Antidote's
+        click came, the Antidote was gone and Jarvis not cured)."""
+
+        def tiles() -> dict[int, int]:
+            dude = self.snap().dude
+            return {
+                c.address: c.tile
+                for c in state.critters(self.mem)
+                if c.team == dude.team and c.address != dude.address and not c.dead
+            }
+
+        last, end = tiles(), time.monotonic() + timeout_s
+        while last and time.monotonic() < end:
+            time.sleep(0.5)
+            now = tiles()
+            if now == last:
+                return
+            last = now
+
     def _use_in_mode(
         self, tile: int, arm, done, timeout_s: float, aims, action: str, detail: dict, targets=frozenset()
     ) -> Outcome:
@@ -357,6 +378,7 @@ class InteractionActions:
 
         offsets = list(aims or ((0, -6), (0, 0), (0, -12), (5, -4), (-5, -4), (0, -20)))
         if targets:  # a point on the target itself, found in arrow mode, then the use cursor clicks there
+            self.companions_settle()
             spot = self._aim_at(targets, [(cx + dx, cy + dy) for dx, dy in offsets], (cx, cy))
             if spot is not None:
                 offsets = [(spot[0] - cx, spot[1] - cy)] * 3
