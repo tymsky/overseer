@@ -8,6 +8,10 @@
         a save on the first map, kept as saves/<name>-start); then a new session from it and the character's routes
         one after another, unattended (f1/routes.py). The Idealist plays the whole game; the Agent the first quests.
         --until N stops before step N of the chain, --clock K runs a test at K times the game's speed
+    python -m f1.play idealist --ironman [--until N]
+        an ironman run: a new game with the character entered in the editor (no start save), the hardest settings at
+        the game's own speeds (flows.IRONMAN_PREFS), never saved or loaded; a death, a stuck game or a required step
+        that fails ends it (route_runner.run's `ended`)
 
 With the default background input (--input proxy) the game plays behind other windows and the PC stays free; with
 --input direct keep off the mouse and keyboard while it plays (the presence guard pauses the bot otherwise). Either
@@ -86,6 +90,27 @@ def start_save(build: chargen.Build) -> str:
     return name
 
 
+def new_game(build: chargen.Build) -> None:
+    """An ironman run's start: a new game with the character entered in the editor and the ironman preferences set,
+    nothing saved (the game's process started when none runs)."""
+    pid = session.game_pid() or session.start()["pid"]
+    print(f"entering the {build.name} in the game's editor (a new game, nothing saved) ...")
+    chargen.create(pid, build)
+    prefs = flows.set_preferences(pid, flows.IRONMAN_PREFS)
+    if not prefs["ok"]:
+        raise flows.FlowError(f"the preferences did not take: {prefs}")
+
+
+def ironman(character: str, until: int | None) -> int:
+    build = chargen.BUILDS[character]
+    steps = [step for name in CHAINS[character] for step in routes.all_routes()[name]]
+    steps = steps[: until - 1] if until else steps
+    run_dir = paths.RUNS / f"{datetime.datetime.now().astimezone():%Y%m%d-%H%M%S}-ironman-{character}"
+    with session.driver_lock(f"ironman {character}"):
+        new_game(build)
+        return routes._drive(steps, 1, None, run_dir, ironman=True)
+
+
 def play(character: str, until: int | None, speed: float | None) -> int:
     build = chargen.BUILDS[character]
     steps = [step for name in CHAINS[character] for step in routes.all_routes()[name]]
@@ -116,7 +141,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("character", nargs="?", default="idealist", choices=sorted(CHAINS))
     ap.add_argument("--until", type=int, help="stop before step N of the chain")
     ap.add_argument("--clock", type=float, help="a test run at K times the game's speed")
+    ap.add_argument("--ironman", action="store_true", help="one game, never saved or loaded, the hardest settings")
     args = ap.parse_args(argv)
+    if args.ironman:
+        if args.clock:
+            ap.error("an ironman run plays at the game's own speed: no --clock")
+        return ironman(args.character, args.until)
     return play(args.character, args.until, args.clock)
 
 

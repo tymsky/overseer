@@ -114,6 +114,14 @@ AGENT_PREFS = {"combat_difficulty": 0, "combat_speed": 50, "prf_running": 1, "pl
 # twelve non-combat skills (skill.c skill_game_difficulty) and nothing else a script reads.
 IDEALIST_PREFS = AGENT_PREFS | {"game_difficulty": 0}
 PREFS = {"Agent": AGENT_PREFS, "Idealist": IDEALIST_PREFS}
+# An ironman run (one game, never saved or loaded): the hardest settings at the game's own speeds. Game difficulty
+# Hard (-10 to the non-combat skills), combat Rough (a foe's to-hit +20 and its damage 125 %: combat.c), the combat
+# speed slider at its default 0, no player speed-up; the player always runs (the owner's rule); the music off as in
+# every recording.
+IRONMAN_PREFS = {
+    "combat_difficulty": 2, "game_difficulty": 2, "combat_speed": 0, "prf_running": 1, "player_speedup": 0,
+    "music_volume": 0,
+}  # fmt: skip
 BY_CHARACTER = "character"  # as `prefs`: the preferences of the character in the game (PREFS by its name)
 
 

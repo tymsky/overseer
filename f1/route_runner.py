@@ -19,6 +19,7 @@ from f1.telemetry import EventLog
 
 UNARMED_MAPS = ("CHILDRN", "MSTRLR", "MBENT", "MBSTRG", "MBVATS")  # a weapon in a hand slot turns their people hostile
 
+IRONMAN_STUCK_S = 60  # an ironman run is stuck after a minute without progress on any screen (the owner's rule)
 TOWN_SWEEP = 20  # hexes round the Agent that a checkpoint's loot sweep covers in a town
 
 # towns whose guards walk up to a drawn gun: the talk blocks the save (Junktown's gate, a full run, twice 27 s)
@@ -130,11 +131,18 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.S
 
 
 def checkpoint(
-    actor: Actor, number: int, level: int, leveled: int, level_up: Callable[[int], dict] | None, carried: list
+    actor: Actor,
+    number: int,
+    level: int,
+    leveled: int,
+    level_up: Callable[[int], dict] | None,
+    carried: list,
+    save: bool = True,
 ) -> tuple[bool, int]:
     """After checkpoint step `number`: a talk left open settled (someone walked up; it blocks the character screen
-    and the save), the level-up spent when the level rose past `leveled`, prepare, then the quicksave to slot 1.
-    (saved, the level spent up to). Raises watchdog.Stuck when its own screens hang."""
+    and the save), the level-up spent when the level rose past `leveled`, prepare, then the quicksave to slot 1 (none
+    without `save`: an ironman run). (saved, the level spent up to). Raises watchdog.Stuck when its own screens
+    hang."""
     settle(actor)
     if level_up is not None and level > leveled and not actor.in_combat():
         try:
@@ -144,6 +152,8 @@ def checkpoint(
         actor.log.emit("level_up", level=level, **spent)
         leveled = level if spent.get("ok") else leveled
     prepare(actor, carried)
+    if not save:
+        return False, leveled
     name = f"route {number}"
     saved = actor.quicksave(1, name).ok or (settle(actor) and actor.quicksave(1, name).ok)
     return saved, leveled
@@ -192,6 +202,7 @@ def run(
     prefs: dict[str, int] | str | None = None,
     exploits: bool | None = None,
     on_step: Callable[[int], None] | None = None,
+    ironman: bool = False,
 ) -> dict:
     """Run steps from `start` (1-based). `on_step(i)` is told each step's index (0-based) before it runs. Starting mid-way assumes slot 1 holds the checkpoint before it. With
     `level_up`, a checkpoint first spends a level-up when the level rose (the game adds the skill points only when
@@ -201,6 +212,10 @@ def run(
     No reloading for luck: a step that fails is tried again where the game stands, never loaded for (a roll's outcome
     stands); past its tries an optional step is skipped and a required one ends the route. Only a death or a stuck
     game loads the last checkpoint.
+
+    An ironman run (`ironman`) never saves or loads: a checkpoint only spends the level-up and prepares, and a
+    death, a stuck game (the watchdog, a crash) or a required step past its tries ends the route; the result's
+    `ended` says which ("death", "stuck", "failed"; "done" when it got through).
 
     A step marked `exploit` runs only when `exploits` is true; None takes it from the build of the character in the
     game (chargen.Build.exploits, off by default)."""
@@ -213,7 +228,7 @@ def run(
         mem = getattr(actor, "mem", None)
         build = chargen.build_of(state.character_name(mem)) if mem is not None else None
         exploits = bool(build and build.exploits)
-    log.emit("route_start", steps=len(steps), exploits=exploits)
+    log.emit("route_start", steps=len(steps), exploits=exploits, ironman=ironman)
     carried: list = []  # the loadout the weapon was last readied for
     try:
         ensure_preferences(actor, prefs)
@@ -235,7 +250,7 @@ def run(
         ok, died, s, stuck = try_step(actor, step, i + 1)
         if ok and not died and step.checkpoint:
             try:
-                saved, leveled = checkpoint(actor, i + 1, s.level, leveled, level_up, carried)
+                saved, leveled = checkpoint(actor, i + 1, s.level, leveled, level_up, carried, save=not ironman)
             except (watchdog.Stuck, ReadError) as e:  # its screens hung, or the game crashed under it: back to the last
                 # one (the Hub's farm: the game's process ended during the checkpoint's loot sweep, and the
                 # ReadError stopped the route instead of the restart a crash in a step gets)
@@ -246,7 +261,7 @@ def run(
             else:
                 if saved:  # an unsaved checkpoint must not become the place a reload resumes from
                     last_checkpoint = i
-                else:
+                elif not ironman:
                     log.emit("checkpoint_failed", step=step.name)
         if ok and not died:
             i += 1
@@ -256,8 +271,10 @@ def run(
             where = (s.map_name, s.elevation, s.dude.tile if s.dude else None, s.dude.hp if s.dude else None)
             if where == last_failure.get(step.name) and not step.optional:  # fail fast: again, and nothing changed
                 why = "no progress: failed again and the game did not change"
-                log.emit("route_end", ok=False, at=step.name, why=why, loads=loads, fails=fails, skipped=skipped)
-                return {"ok": False, "at": step.name, "why": why, "loads": loads, "fails": fails, "skipped": skipped}
+                log.emit("route_end", ok=False, at=step.name, why=why, loads=loads, fails=fails, skipped=skipped,
+                         ended="stuck")  # fmt: skip
+                return {"ok": False, "at": step.name, "why": why, "loads": loads, "fails": fails, "skipped": skipped,
+                        "ended": "stuck", "step": i + 1}  # fmt: skip
             last_failure[step.name] = where
             if fails[step.name] < step.tries:
                 log.emit("retry", step=step.name, tries=fails[step.name])
@@ -267,8 +284,14 @@ def run(
                 skipped.append(step.name)
                 i += 1
                 continue
-            log.emit("route_end", ok=False, at=step.name, loads=loads, fails=fails, skipped=skipped)
-            return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
+            log.emit("route_end", ok=False, at=step.name, loads=loads, fails=fails, skipped=skipped, ended="failed")
+            return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped,
+                    "ended": "failed", "step": i + 1}  # fmt: skip
+        if ironman:  # no load: the run ends here
+            ended = "death" if died else "stuck"
+            hp = s.dude.hp if s and s.dude else None
+            log.emit("route_end", ok=False, at=step.name, ended=ended, step=i + 1, hp=hp, fails=fails, skipped=skipped)
+            return {"ok": False, "at": step.name, "ended": ended, "step": i + 1, "fails": fails, "skipped": skipped}
         failed = steps[last_checkpoint + 1] if last_checkpoint + 1 < len(steps) else step
         loads[failed.name] = loads.get(failed.name, 0) + 1
         if loads[failed.name] > failed.tries:
@@ -279,8 +302,8 @@ def run(
             log.emit("route_end", ok=False, at=step.name, loads=loads, why="the checkpoint would not load")
             return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
         i = last_checkpoint + 1
-    log.emit("route_end", ok=True, loads=loads, fails=fails, skipped=skipped)
-    return {"ok": True, "loads": loads, "fails": fails, "skipped": skipped}
+    log.emit("route_end", ok=True, loads=loads, fails=fails, skipped=skipped, ended="done")
+    return {"ok": True, "loads": loads, "fails": fails, "skipped": skipped, "ended": "done"}
 
 
 def fail_fast(actor: Actor, error: BaseException) -> None:
@@ -303,21 +326,27 @@ def _drive(
     speed: float | None,
     run_dir: Path,
     on_step: Callable[[Actor, int], None] | None = None,
+    ironman: bool = False,
+    out: dict | None = None,
 ) -> int:
     actor = Actor(session.game_pid(), EventLog(run_dir / "events.jsonl"))
     if speed:  # a test run's waits at a faster clock, none at the end
         actor.log.emit("clock", **clock.set_fast(actor.pid, speed).__dict__)
     elif left := clock.reset(actor.pid):  # a killed test run left its speed in the game
         actor.log.emit("clock_reset", **left.__dict__)
+    watchdog.set_cap(IRONMAN_STUCK_S if ironman else None)
     dog = watchdog.Watchdog(actor.pid, actor.log)
     dog.start()
     try:
         try:
             hook = (lambda i: on_step(actor, i)) if on_step else None
-            result = run(actor, steps, start, level_up=chargen.level_up, prefs=flows.BY_CHARACTER, on_step=hook)
+            prefs = flows.IRONMAN_PREFS if ironman else flows.BY_CHARACTER
+            result = run(actor, steps, start, level_up=chargen.level_up, prefs=prefs, on_step=hook, ironman=ironman)
         except Exception as e:  # fail fast: a bug stops the run at once; what it saw goes in the events first
             fail_fast(actor, e)
             raise
+        if out is not None:  # the caller's copy of run()'s result (an ironman coordinator reads `ended`, `step`)
+            out.update(result)
         print(result, f"(events: {run_dir / 'events.jsonl'})")
         return 0 if result["ok"] else 1
     finally:

@@ -87,6 +87,16 @@ def _trip(why: str) -> None:
         _tripped = why
 
 
+_cap: float | None = None  # an ironman run's ceiling on every screen's allowance (set_cap)
+
+
+def set_cap(seconds: float | None) -> None:
+    """At most `seconds` without progress on any screen (an ironman run: one minute, the owner's rule); None: the
+    screens' own allowances."""
+    global _cap
+    _cap = seconds
+
+
 def limit_for(screen: str) -> float | None:
     """The screen's allowance in seconds; None where waiting is the game's own business: movies, the ending's slides,
     and any big window no module claims (the credits: a 0x14 window 640x480 at (0, 0), nine minutes in the first full
@@ -96,7 +106,8 @@ def limit_for(screen: str) -> float | None:
         return None
     if screen.startswith("window "):
         return UNNAMED_LIMIT if kind == "box" else None
-    return LIMITS.get(screen, 60)
+    limit = LIMITS.get(screen, 60)
+    return limit if _cap is None else min(limit, _cap)
 
 
 @dataclass

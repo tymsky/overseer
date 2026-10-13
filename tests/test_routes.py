@@ -96,7 +96,7 @@ def test_a_failed_step_is_tried_again_in_place_without_a_load(loads: list[int]) 
     steps = [Step("a", step("a")), Step("b", step("b"), checkpoint=True), Step("c", step("c")), Step("d", step("d"))]
     actor = FakeActor()
     result = routes.run(actor, steps)
-    assert result == {"ok": True, "loads": {}, "fails": {"c": 1}, "skipped": []}
+    assert result == {"ok": True, "loads": {}, "fails": {"c": 1}, "skipped": [], "ended": "done"}
     assert ran == ["a", "b", "c", "c", "d"]
     assert loads == []  # no load for a failure
     assert [f["description"] for f in actor.log.kinds("save")] == ["route 2"]
@@ -107,7 +107,7 @@ def test_a_death_loads_the_checkpoint_and_goes_on_after_it(loads: list[int]) -> 
     step = scripted(ran, {"c": ["die", True]})
     steps = [Step("a", step("a")), Step("b", step("b"), checkpoint=True), Step("c", step("c")), Step("d", step("d"))]
     result = routes.run(FakeActor(), steps)
-    assert result == {"ok": True, "loads": {"c": 1}, "fails": {}, "skipped": []}
+    assert result == {"ok": True, "loads": {"c": 1}, "fails": {}, "skipped": [], "ended": "done"}
     assert ran == ["a", "b", "c", "c", "d"]  # after the load: from the step after the checkpoint (c), not from a
     assert loads == [1]
 
@@ -147,7 +147,7 @@ def test_an_optional_step_that_keeps_failing_is_skipped(loads: list[int]) -> Non
     step = scripted(ran, {"luck": [False]})
     steps = [Step("a", step("a")), Step("luck", step("luck"), tries=1, optional=True), Step("b", step("b"))]
     result = routes.run(FakeActor(), steps)
-    assert result == {"ok": True, "loads": {}, "fails": {"luck": 1}, "skipped": ["luck"]}
+    assert result == {"ok": True, "loads": {}, "fails": {"luck": 1}, "skipped": ["luck"], "ended": "done"}
     assert ran == ["a", "luck", "b"] and loads == []
 
 
@@ -374,3 +374,34 @@ def test_a_crash_during_a_checkpoint_restarts_the_game_too(loads: list[int], mon
     actor = FakeActor()
     result = routes.run(actor, steps)
     assert result["ok"] and actor.pid == 88 and loads == [1]
+
+
+def test_an_ironman_run_ends_at_a_death_and_never_saves_or_loads(loads: list[int]) -> None:
+    ran: list[str] = []
+    step = scripted(ran, {"c": ["die", True]})
+    steps = [Step("a", step("a")), Step("b", step("b"), checkpoint=True), Step("c", step("c")), Step("d", step("d"))]
+    actor = FakeActor()
+    result = routes.run(actor, steps, ironman=True)
+    assert result["ok"] is False and result["ended"] == "death" and result["step"] == 3 and result["at"] == "c"
+    assert ran == ["a", "b", "c"]
+    assert loads == []
+    assert actor.log.kinds("save") == []  # the checkpoint only prepared
+
+
+def test_an_ironman_run_without_trouble_ends_done(loads: list[int]) -> None:
+    ran: list[str] = []
+    step = scripted(ran, {})
+    steps = [Step("a", step("a"), checkpoint=True), Step("b", step("b"))]
+    actor = FakeActor()
+    assert routes.run(actor, steps, ironman=True)["ended"] == "done"
+    assert actor.log.kinds("save") == [] and loads == []
+
+
+def test_the_ironman_cap_bounds_every_screen() -> None:
+    try:
+        watchdog.set_cap(60)
+        assert watchdog.limit_for("map") == 60
+        watchdog.set_cap(None)
+        assert watchdog.limit_for("map") == watchdog.LIMITS["map"]
+    finally:
+        watchdog.set_cap(None)
