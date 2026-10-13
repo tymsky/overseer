@@ -270,6 +270,10 @@ class CombatActions:
         refuse is left by the map's nearest exit (quests.flee, as Fallout 2's way out of a forced fight) while
         `leave_refused`; when no way out is found it is fought."""
         self.log.emit("action_start", action="fight", forced=forced)
+        # a forced fight's weighed foes: the fight steps towards no other (an onlooker comes by itself, or not at
+        # all; the radscorpion caves, an ironman run: the weighed one's shot blocked, eight hexes towards one the
+        # gate had not counted, both stung and the player died)
+        weighed: set[int] | None = None
         if forced and self.in_combat():
             prep = self.forced_prep or self.flare_prep
             if prep is not None:  # on the player's turn, so the gate weighs what it changed
@@ -278,6 +282,7 @@ class CombatActions:
                 if self.in_combat() and self.my_turn():
                     prep()
             chance = self.weigh_forced()
+            weighed = {c.address for c in self.forced_group()[0]} or None
             if chance is not None and not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
                 from f1 import quests
 
@@ -362,10 +367,11 @@ class CombatActions:
                     pack = sum(
                         1 for e in foes if e is not target and geometry.distance(e.tile, target.tile) <= PACK_HEXES
                     )
-                    closer = 0 if pack else min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
+                    onlooker = weighed is not None and target.address not in weighed
+                    closer = 0 if pack or onlooker else min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
                     self.log.emit(
-                        "tactic", move="wait for it" if pack else "close in", chance=chance, gap=gap, hexes=closer,
-                        pack=pack,
+                        "tactic", move="wait for it" if pack or onlooker else "close in", chance=chance, gap=gap, hexes=closer,
+                        pack=pack, onlooker=onlooker,
                     )  # fmt: skip
                     if closer > 0:
                         moved = self.combat_move_towards(target.tile, closer)
@@ -409,7 +415,8 @@ class CombatActions:
                     blocked_before.add(in_reach[0].address)
                     if len(in_reach) > 1:
                         continue  # the next foe this same turn
-            unhittable = [e for e in near if missed.get(e.address, 0) >= 2]
+            towards = [e for e in foes if weighed is None or e.address in weighed]
+            unhittable = [e for e in near if missed.get(e.address, 0) >= 2 and e in towards]
             if unhittable and s.dude.ap > cost and self.combat_move_towards(unhittable[0].tile, 3).ok:
                 missed[unhittable[0].address] = 0  # from closer the clicks may land (Vault 12: a glowing one, 7 HP)
                 acted = rounds
@@ -420,7 +427,7 @@ class CombatActions:
                 if win32.wait_for(lambda: not self.in_combat(), 3, 0.1):
                     continue
             far = foes and not in_reach and s.dude.ap > cost  # foes too far: close in, keeping AP for a shot
-            if far and self.combat_move_towards(foes[0].tile, s.dude.ap - cost).ok:
+            if far and towards and self.combat_move_towards(towards[0].tile, s.dude.ap - cost).ok:
                 acted = rounds
                 continue
             if far and rounds - acted > STALL_TURNS and s.dude.ap == self.max_ap:

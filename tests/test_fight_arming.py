@@ -139,7 +139,7 @@ def test_an_accepted_or_unforced_fight_is_not_left(monkeypatch) -> None:
     a = bare_actor(monkeypatch)
     combat = [True]
     a.in_combat = lambda: combat.pop(0) if combat else False
-    a.forced_group = lambda: ([SimpleNamespace()], [])
+    a.forced_group = lambda: ([SimpleNamespace(address=1)], [])
     ok = odds.Odds(0.99, 30.0, 4.0, 3.0, 60, 40, death_high=0.004, accept=True)
     monkeypatch.setattr(odds, "assess", lambda *x, **k: ok)
     from f1 import quests
