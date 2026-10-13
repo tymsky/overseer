@@ -233,8 +233,26 @@ def ian(actor: Actor) -> bool:
         settle(actor)
     joined = quests.gvar(actor, "IAN_STATUS") == 2
     rolled = any(dialogue.holds(chosen, "ian", 159) for _r, _o, chosen in steps)
-    actor.log.emit("ian", joined=joined, caps=caps, rolled=rolled, steps=len(steps))
+    if joined:
+        ian_far(actor)
+    actor.log.emit("ian", joined=joined, caps=caps, rolled=rolled, steps=len(steps),
+                   formation=quests.gvar(actor, "DESTROY_VATS_5"))  # fmt: skip
     return joined
+
+
+def ian_far(actor: Actor) -> None:
+    """Ian's formation at longer range: IAN.INT follow_player picks a hex (DESTROY_VATS_5 * 2 + 1..2) from the player
+    and walks once he is more than (DESTROY_VATS_5 + 1) * 2 off (IanFar sets 2: 5-6 hexes; the default 0: 1-2). Close
+    by, he shot the player in a melee (an ironman run), took a click meant for Jarvis's bed and for Vault 15's ladder,
+    and stood in the one way out of a corner of Vault 15 (ten "no path", stuck). The talk: Ian15 (a party member's)
+    "I need to change formation." (389 #159), IanTactics "Move out to longer range." (#163), back in Ian15 "Never
+    mind" (#144)."""
+    quests.talk(actor, "Ian", ["#159"], strict=True)  # stops at IanTactics, the talk open
+    for plan in (["#163"], ["#144"]):
+        if actor.snap().screen == "dialogue":
+            dialogue.converse_strict(actor.mem, plan, log=actor.log)
+    if actor.snap().screen == "dialogue":
+        settle(actor)
 
 
 SCORPIONS = 9  # in the caves at the start (each carries a Scorpion Tail)
