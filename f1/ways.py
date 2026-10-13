@@ -272,8 +272,25 @@ def door_way(actor, goal: int, walls: doors.Walls | None = None, log=None) -> tu
     shut = frozenset(closed) - walled
     path = pathfind.find(snap, snap.dude, snap.dude.tile, goal, doors_open=shut, avoid=walled)
     if path is None:
+        # the engine's search stops at 2000 nodes: from Killian's counter (JUNKKILL 25883) to the exit to Gizmo's
+        # casino it finds none even with his front door taken as open (JUNKKILL.MAP, offline), while the bot's own
+        # search walks 120 hexes through it; ironman runs stood there three times, the door shut by a long rest
+        path = own_door_way(actor, goal, walls)
+    if path is None:
         return None, []
     return path, pathfind.doors_on(snap, path, snap.elevation)
+
+
+def own_door_way(actor, goal: int, walls: doors.Walls) -> list[int] | None:
+    """The bot's own search (no node cap) to GOAL with the closed doors taken as open (the walled ones kept shut) and
+    the other exit grids kept off; the start left out, as in the engine's path."""
+    from f1 import nav
+
+    s = actor.snap()
+    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address, walls.on(s.map_name, s.elevation))
+    keep_off = frozenset(t for t in obs.exits if t != goal)
+    path = nav.astar(s.dude.tile, {goal}, obs.passable_doors | keep_off)
+    return None if path is None else path[1:]
 
 
 DOORS_ON_A_WAY = 8

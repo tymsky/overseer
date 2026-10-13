@@ -157,3 +157,36 @@ def test_stairs_and_ladders_from_their_scripts():
 def test_a_door_the_player_cannot_open_by_hand():
     assert doors.hand_shut("v13door")
     assert not doors.hand_shut("metldoor") and not doors.hand_shut("")
+
+
+@needs_files
+def test_own_door_way_past_the_engines_node_cap(monkeypatch):
+    """From Killian's counter (JUNKKILL 25883) to the exit to Gizmo's casino (11071) the engine's search ends at its
+    node cap even with the front door (27483) taken as open; the bot's own search plans the way through the door."""
+    from types import SimpleNamespace
+
+    from f1 import mapfile, nav
+
+    start, goal, door = 25883, 11071, 27483
+    objects = mapfile.read("JUNKKILL").objects
+    monkeypatch.setattr(doors, "is_door", {o.pid for o in objects if o.kind == "door"}.__contains__)
+    by_tile, blocked, shut = {}, set(), set()
+    for n, o in enumerate(objects, 1):
+        if o.elevation != 0 or o.tile < 0 or o.pid >> 24 not in (2, 3):
+            continue
+        by_tile.setdefault(o.tile, []).append(obj(n, o.tile, o.pid, o.flags))
+        if not o.flags & doors.NO_BLOCK:
+            blocked.add(o.tile)
+            if doors.is_door(o.pid):
+                shut.add(o.tile)
+    dude = obj(0, start, DUDE_PID)
+    by_tile.setdefault(start, []).append(dude)
+    s = Snapshot(CAM, 0, start, dude, None, by_tile, 200, (frozenset(), frozenset()))
+    assert door in shut
+    assert pathfind.find(s, dude, start, goal, doors_open=frozenset(shut)) is None
+
+    obs = nav.Obstacles(frozenset(blocked), {goal: (0, 0, 0)}, frozenset(shut))
+    monkeypatch.setattr(nav, "obstacles", lambda *a, **k: obs)
+    actor = SimpleNamespace(mem=None, snap=lambda: SimpleNamespace(elevation=0, map_name="JUNKKILL.MAP", dude=dude))
+    path = ways.own_door_way(actor, goal, doors.Walls())
+    assert path is not None and path[-1] == goal and start not in path and door in path
