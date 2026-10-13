@@ -71,6 +71,17 @@ def carrying(actor: Actor, critter) -> bool:
     return any(p == PID_WATER_FLASK for _, p, _ in loot.inventory(actor.mem, critter.address))
 
 
+def finish_the_thief(actor: Actor) -> bool:
+    """A failed search made the thief hostile: he is fought until his death completes the quest, followed when he
+    flees (critters run at low HP and combat ends out of sight)."""
+    from f1 import raiders
+
+    done = lambda: quests.gvar(actor, "WATER_THIEF") >= 2 and not actor.in_combat()
+    raiders.fight_these(actor, ("script:wtrthief",), done, rounds=16)
+    actor.log.emit("thief", finished=quests.gvar(actor, "WATER_THIEF"))
+    return quests.gvar(actor, "WATER_THIEF") >= 2
+
+
 def the_water_thief(actor: Actor) -> bool:
     """On the Overseer's floor by midnight, out of the thief's sight; talked to while he carries the flask.
 
@@ -82,9 +93,15 @@ def the_water_thief(actor: Actor) -> bool:
         return True
     if actor.snap().elevation != 2 and not quests.use_elevator(actor, "3"):
         return False
+    if actor.thief_searched and quests.find_critter(actor, "wtrthief") is not None:
+        # searched in vain on a try before (WATER_THIEF stays 1, Lyle's: the quest taken): he attacks (WTRTHIEF
+        # critter_p_proc), wherever he went
+        return finish_the_thief(actor)
     s = actor.snap()
     obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
     nav.go_to(actor, {t for t in THIEF_HIDE if t not in obs.blocked}, max_steps=60)
+    if quests.gvar(actor, "WATER_THIEF") >= 2:
+        return True
     if not (0 <= hour(actor) < 0.5 or hour(actor) >= 21):
         # his script forgets last night's theft (var3, var4) only in a tick after 06:00, and a rest runs no ticks
         if not 7 <= hour(actor) < 18:
@@ -110,9 +127,13 @@ def the_water_thief(actor: Actor) -> bool:
     if talked:
         dialogue.converse_strict(actor.mem, THIEF_TALK, log=actor.log)
     settle(actor)
-    if actor.in_combat():  # the search failed (CH 3: 30 %): his fight, which completes it too (500 XP)
-        actor.ready_weapon()
-        actor.fight()
+    # the search failed (CH 3: 30 %): his fight, which completes it too (WTRTHIEF destroy_p_proc: WATER_THIEF 2,
+    # 500 XP). It can begin seconds after the talk (an ironman run: none at the settle, then he attacked on the
+    # next try, fled at HP 2 and the watch waited half an hour of game time for him)
+    actor.thief_searched = talked and quests.gvar(actor, "WATER_THIEF") != 2
+    fought = win32.wait_for(lambda: actor.in_combat() or quests.gvar(actor, "WATER_THIEF") == 2, 5, 0.2)
+    if fought and quests.gvar(actor, "WATER_THIEF") != 2:
+        return finish_the_thief(actor)
     win32.wait_for(lambda: quests.gvar(actor, "WATER_THIEF") == 2, 10, 0.25)
     actor.log.emit("thief", talked=talked, water_thief=quests.gvar(actor, "WATER_THIEF"), xp=experience(actor) - x0)
     return quests.gvar(actor, "WATER_THIEF") == 2
