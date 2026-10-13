@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import clock, quests, win32
+from f1 import clock, quests, watchdog, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.route_support import (
     TOWN_GREETINGS,
@@ -170,9 +170,12 @@ def by_day(actor: Actor) -> bool:
         # the doors unlock only in a map update after 6:00 (KILDOOR1/2 map_update_p_proc), and a rest that ends at
         # noon runs none: an ironman run stood locked in at noon, two tries 20 s apart. The updates come with the game
         # time queue (a game minute apart, as read from CE; not measured here): 65 game seconds pass first
+        # (at normal speed that is a real minute: the watchdog is told, it called the first such wait stuck)
         t0 = actor.snap().game_time
+        watchdog.quiet(95)
         with clock.fast(actor.pid):
             win32.wait_for(lambda: actor.snap().game_time >= t0 + 650, 90, 0.5)
+        watchdog.unquiet()
     return ok
 
 
