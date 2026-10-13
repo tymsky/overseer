@@ -161,3 +161,19 @@ def test_an_accepted_or_unforced_fight_is_not_left(monkeypatch) -> None:
     assert a.fight(forced=True).reason == "combat over"
     monkeypatch.setattr(odds, "assess", lambda *x, **k: (_ for _ in ()).throw(AssertionError("weighed")))
     assert a.fight().reason == "combat over"
+
+
+def test_a_shot_worth_taking_comes_before_a_hopeless_one_even_once_blocked() -> None:
+    """Vault 15, an ironman run: a mole rat beside the player, its shot blocked once, was never tried again while
+    the fight held fire at one 21 hexes off (-25 %); four stimpaks and HP 48 to 7 later the run stood."""
+    from types import SimpleNamespace
+
+    from f1.action_combat import target_order
+
+    near = SimpleNamespace(address=1, hp=6)
+    far = SimpleNamespace(address=2, hp=6)
+    order = target_order([far, near], {1: 95, 2: -25}, {1: 1, 2: 21}, blocked_before={1}, stuck_at=set())
+    assert order == [near, far]
+    other = SimpleNamespace(address=3, hp=6)  # among shots worth taking, the blocked one still waits
+    order = target_order([near, other], {1: 95, 3: 60}, {1: 1, 3: 5}, blocked_before={1}, stuck_at=set())
+    assert order == [other, near]

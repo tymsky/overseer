@@ -68,6 +68,25 @@ def retreat_hex(
     return best[1] if best else None
 
 
+def target_order(foes: list, chances: dict[int, int], gaps: dict[int, int], blocked_before: set[int],
+                 stuck_at: set[int]) -> list:  # fmt: skip
+    """The foes in reach in the order a gun tries them: any shot worth taking before a hopeless one, then the ones not
+    blocked before and not out of reach, the weakest, the nearest. A foe whose shot was blocked once stays behind the
+    others only among shots worth taking: Vault 15, an ironman run: a mole rat's shot was blocked once, and for five
+    minutes of turns the fight held fire at a rat 21 hexes off (-25 %) while the first bit HP 48 to 7 beside the
+    player, four stimpaks gone."""
+    return sorted(
+        foes,
+        key=lambda e: (
+            chances[e.address] < HOPELESS_SHOT,
+            e.address in blocked_before,
+            e.address in stuck_at,
+            e.hp,
+            gaps.get(e.address, 99),
+        ),
+    )
+
+
 class CombatActions:
     """Fight execution using the Actor equipment, targeting and movement actions."""
 
@@ -371,15 +390,7 @@ class CombatActions:
                 # The weakest foe first only among those worth a shot: in Vault 15 the weakest was a rat
                 # 16 hexes off with no way to it (-5 %), held fire at for 12 turns while another bit HP 38 to 4.
                 chances = {e.address: odds.shot_chance(self, e, held.pid, gaps.get(e.address, 99)) for e in in_reach}
-                in_reach.sort(
-                    key=lambda e: (
-                        e.address in blocked_before,
-                        e.address in stuck_at,
-                        chances[e.address] < HOPELESS_SHOT,
-                        e.hp,
-                        gaps.get(e.address, 99),
-                    )
-                )
+                in_reach = target_order(in_reach, chances, gaps, blocked_before, stuck_at)
                 target, gap = in_reach[0], gaps.get(in_reach[0].address, 99)
                 chance = chances[target.address]
                 armed = odds.armed_at_range(self.mem, target)
