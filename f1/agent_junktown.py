@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import clock, nav, quests, watchdog, win32
+from f1 import clock, geometry, nav, quests, session, watchdog, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.route_support import (
     TOWN_GREETINGS,
@@ -66,18 +66,32 @@ def into_killians_store(actor: Actor) -> bool:
     return on_map(actor, "JUNKKILL")
 
 
+def kenji_near(actor: Actor) -> bool:
+    """Kenji in, on his way from the door (hex 28283, 12 hexes from the talk's place) to Killian."""
+    k = quests.find_critter(actor, "Kenji")
+    return k is not None and geometry.distance(k.tile, actor.snap().dude.tile) <= 10
+
+
 def kenji(actor: Actor) -> bool:
     """By day (the store is locked at night, and Killian sleeps: by_day), Killian's first talk; Gizmo's assassin Kenji
     comes in shooting after it: the gun out, a fight against him alone. Done once Kenji came and is gone. At 6 in the
     morning the talk failed (Killian asleep), Kenji never came, and "no Kenji here" passed the step (a full run at
-    Full HD): without the fight Killian never thanks the Agent and offers the job (KILLIAN.INT Killian47)."""
+    Full HD): without the fight Killian never thanks the Agent and offers the job (KILLIAN.INT Killian47).
+    Killian47 needs Kenji hurt by the player himself: KENJI.INT damage_p_proc sets map_var(2) only when the source is
+    the player, and Killian47 is said only with it set. Kenji is placed at hex 28283 after the talk and attacks once
+    within 3 hexes of 26281; a fight he begins can end before the player's first turn (an ironman run with Ian: a
+    critical hit for 56 killed him first, and the job was never offered). So the combat is begun on sight of him: the
+    player's turn comes first."""
     by_day(actor)
     quests.talk(actor, "Killian Darkwater", ["#107/121"])
     actor.holster(False)
+    if win32.wait_for(lambda: actor.in_combat() or kenji_near(actor), 15, 0.1) and not actor.in_combat():
+        session.press("a")  # the first turn is ours
     fought = win32.wait_for(actor.in_combat, 45, 0.25)
     if fought:
         actor.fight(only=("Kenji",))
     time.sleep(1.5)
+    actor.log.emit("kenji", fought=fought, hurt_by_player=quests.mvar(actor, 2))  # map_var(2): Killian47's offer
     settle(actor, KILLIAN_JOB)  # Killian speaks up after the fight and offers the job (a chain run)
     return fought and quests.find_critter(actor, "Kenji") is None and not actor.in_combat()
 

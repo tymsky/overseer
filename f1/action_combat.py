@@ -382,26 +382,33 @@ class CombatActions:
                 )
                 target, gap = in_reach[0], gaps.get(in_reach[0].address, 99)
                 chance = chances[target.address]
-                if chance < GOOD_SHOT and gap > 1 and not odds.armed_at_range(self.mem, target):
-                    # it walks up by itself; a step towards it among others of its kind brings them in too (the
-                    # radscorpion caves, two ironman runs: the weighed one's shot was blocked, six hexes in towards
-                    # another, then two stung 14-29 a round and the player died)
-                    pack = sum(
-                        1 for e in foes if e is not target and geometry.distance(e.tile, target.tile) <= PACK_HEXES
-                    )
-                    onlooker = weighed is not None and target.address not in weighed
-                    closer = 0 if pack or onlooker else min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
-                    self.log.emit(
-                        "tactic", move="wait for it" if pack or onlooker else "close in", chance=chance, gap=gap, hexes=closer,
-                        pack=pack, onlooker=onlooker,
-                    )  # fmt: skip
-                    if closer > 0:
-                        moved = self.combat_move_towards(target.tile, closer)
-                        if moved.ok:
-                            acted = rounds
-                            continue
-                        if moved.reason == "no path":
-                            stuck_at.add(target.address)
+                armed = odds.armed_at_range(self.mem, target)
+                # a foe with a gun is not closed in on (its shots gain as much), but a shot below LONG_SHOT at it is held
+                # all the same: a desert encounter, an ironman run: a gunman 25 hexes off at -15 %, about 30 shots
+                # in 90 s and none could hit, until the watchdog called the run stuck
+                if chance < GOOD_SHOT and gap > 1 and (not armed or chance < LONG_SHOT):
+                    if not armed:
+                        # it walks up by itself; a step towards it among others of its kind brings them in too (the
+                        # radscorpion caves, two ironman runs: the weighed one's shot was blocked, six hexes in towards
+                        # another, then two stung 14-29 a round and the player died)
+                        pack = sum(
+                            1 for e in foes if e is not target and geometry.distance(e.tile, target.tile) <= PACK_HEXES
+                        )
+                        onlooker = weighed is not None and target.address not in weighed
+                        closer = (
+                            0 if pack or onlooker else min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
+                        )
+                        self.log.emit(
+                            "tactic", move="wait for it" if pack or onlooker else "close in", chance=chance, gap=gap, hexes=closer,
+                            pack=pack, onlooker=onlooker,
+                        )  # fmt: skip
+                        if closer > 0:
+                            moved = self.combat_move_towards(target.tile, closer)
+                            if moved.ok:
+                                acted = rounds
+                                continue
+                            if moved.reason == "no path":
+                                stuck_at.add(target.address)
                     # Vault 15's rubble, the 1x chain: rats 12-16 hexes off with no way to or from them, 11 % at
                     # best, and Enter could not end the fight (they still saw the Agent): 60 turns held, 545 s. Two
                     # turns of that and a poor shot is better than none; nothing to shoot at, and the Agent steps
