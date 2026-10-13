@@ -1,6 +1,6 @@
 """Idealist route tasks for vault15."""
 
-from f1 import geometry, loot, nav, quests, win32, world
+from f1 import geometry, loot, nav, quests, win32, world, worldmap
 from f1.actions import Actor
 from f1.idealist_support import (
     DAY,
@@ -59,6 +59,10 @@ def to_vault_15(actor: Actor) -> bool:
 
 
 def down_the_ladder(actor: Actor) -> bool:
+    """Down into the vault; after a refused fight fled out to the world map, the entrance first again."""
+    if actor.snap().screen == "worldmap":
+        worldmap.enter_here(actor.pid, 0)
+        win32.wait_for(lambda: actor.snap().screen == "map", 30, 0.5)
     return on_map(actor, "VAULTBUR") or quests.use_scenery(
         actor, ("bv2vault", "Ladder"), lambda: on_map(actor, "VAULTBUR"), "the ladder down"
     )

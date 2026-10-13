@@ -198,6 +198,24 @@ class CombatActions:
         group = group or [min(left, key=lambda c: geometry.distance(c.tile, at))]
         return group, [c for c in left if c not in group]
 
+    @property
+    def flare_prep(self):
+        """Any fight a foe began, with flares carried: one lit where the dark costs the shot at the nearest foe
+        (quests.light_up decides). Vault 15's entrance: a radscorpion out of the dark at hit 23 was over the bound
+        and fled (an ironman run)."""
+        from f1 import quests
+
+        if getattr(self, "mem", None) is None or not self._count(quests.PID_FLARE):
+            return None
+
+        def prep() -> None:
+            group, _ = self.forced_group()
+            here = self.snap().dude.tile
+            if group:
+                quests.light_up(self, min(group, key=lambda c: geometry.distance(c.tile, here)))
+
+        return prep
+
     def weigh_forced(self) -> odds.Odds | None:
         """A fight a foe started (on a walk: nav.go_to): weighed at its start by the gate's own rule (odds.assess,
         odds.accepted), logged as the gate logs it (`odds`, forced). None when there is no foe to weigh. Measured:
@@ -237,11 +255,12 @@ class CombatActions:
         `leave_refused`; when no way out is found it is fought."""
         self.log.emit("action_start", action="fight", forced=forced)
         if forced and self.in_combat():
-            if self.forced_prep is not None:  # on the player's turn, so the gate weighs what it changed
+            prep = self.forced_prep or self.flare_prep
+            if prep is not None:  # on the player's turn, so the gate weighs what it changed
                 with clock.fast(self.pid):
                     win32.wait_for(lambda: self.my_turn() or not self.in_combat(), 45, 0.1)
                 if self.in_combat() and self.my_turn():
-                    self.forced_prep()
+                    prep()
             chance = self.weigh_forced()
             if chance is not None and not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
                 from f1 import quests
