@@ -61,3 +61,16 @@ def test_the_same_seed_gives_the_same_odds(seed: int) -> None:
     a = odds.fight(idealist(60), [radscorpion()], seed=seed)
     b = odds.fight(idealist(60), [radscorpion()], seed=seed)
     assert a == b
+
+
+def test_a_foe_closing_in_is_shot_on_the_tile_two_hexes_off_on_its_side():
+    from f1 import geometry
+    from f1.odds import closing_tile
+
+    dude = geometry.in_direction(20100, 0, 0)
+    far = geometry.in_direction(dude, 2, 9)
+    tile = closing_tile(dude, far, 2)
+    assert geometry.distance(tile, dude) == 2
+    assert geometry.distance(tile, far) == 7
+    near = geometry.in_direction(dude, 2, 1)
+    assert closing_tile(dude, near, 2) == near

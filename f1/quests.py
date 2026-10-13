@@ -21,6 +21,8 @@ from f1 import (
     flows,
     geometry,
     knowledge,
+    light,
+    lightmap,
     loot,
     nav,
     odds,
@@ -35,6 +37,7 @@ from f1 import (
 )
 from f1 import engine_map as em
 from f1 import talk as talk_mod
+from f1.action_inventory import INVENTORY_AP, ITEM_MENU_DROP, ITEM_MENU_USE
 from f1.actions import PID_STIMPAK, Actor
 from f1.telemetry import EventLog
 
@@ -64,6 +67,8 @@ HEAL_BELOW = 0.8  # of max HP: a hunt's next fight starts above it, when rest or
 FIGHT_ABOVE = 0.5  # of max HP: below it and not to be healed, the hunt stops rather than start another fight
 BACK_OFFS = 3  # a hunt's tries from another side before a fight against two is refused
 ODDS_TO_FIGHT = 0.8  # f1.odds: a hunt's fight begins only at this chance of winning (fights on computed odds)
+PID_FLARE, PID_LIT_FLARE = 0x4F, 0xCD
+FLARE_NEAR = 2  # hexes: a lit flare lying this close to the player already lights the fight
 
 
 STIMPAKS_KEPT = 4  # for fights; those above it heal first: a rest costs days (below)
@@ -179,6 +184,43 @@ def back_off(actor: Actor, target, foes: list) -> bool:
     return reached
 
 
+def light_up(actor: Actor, target) -> bool:
+    """A flare lit and dropped at the player's feet before a fight in the dark: where the target will be shot from
+    (f1.odds.closing_tile) its light costs the shot (f1.light.penalty) and no lit flare lies near. Its light is added to
+    the tiles round it as every lit object's (f1.lightmap). True when one was dropped. In combat it is lit and dropped
+    in one visit of the inventory, whose 4 AP leave a pistol's shot of the turn's 9 (measured live: lit, closed,
+    reopened to drop, 9 -> 5 -> 1 AP)."""
+    s = actor.snap()
+    fighting = actor.in_combat()
+    if fighting and s.dude.ap < 2 * INVENTORY_AP:
+        return False
+    where = odds.closing_tile(s.dude.tile, target.tile, odds.CLOSE_RANGE)
+    before = light.of_object(actor.mem, s.elevation, where)
+    if light.penalty(before) == 0 or not actor._count(PID_FLARE):
+        return False
+    things = lightmap.read_objects(actor.mem)
+    near = [t for t in things.get(s.dude.tile, []) + [x for r in range(1, FLARE_NEAR + 1)
+            for tile in geometry.ring(s.dude.tile, r) for x in things.get(tile, [])]
+            if t.pid == PID_LIT_FLARE and t.elevation == s.elevation]  # fmt: skip
+    if near:
+        return False
+    actor.item_menu(PID_FLARE, ITEM_MENU_USE)
+    time.sleep(0.6)
+    if fighting:  # the screen still open: the drop costs no more AP
+        dropped = actor._count(PID_LIT_FLARE) and actor.item_menu(PID_LIT_FLARE, ITEM_MENU_DROP) is None
+        time.sleep(0.6)
+        actor.close_inventory()
+        dropped = dropped and not actor._count(PID_LIT_FLARE)
+    else:
+        actor.close_inventory()
+        dropped = actor._count(PID_LIT_FLARE) and loot.drop(actor, PID_LIT_FLARE, 1) > 0
+    after = light.of_object(actor.mem, s.elevation, where)
+    lit = [t for t in lightmap.read_objects(actor.mem).get(actor.snap().dude.tile, []) if t.pid == PID_LIT_FLARE]
+    actor.log.emit("flare", ok=bool(dropped), light=[before, after], tile=where, flares=actor._count(PID_FLARE),
+                   spread=[(t.distance, t.intensity) for t in lit], combat=fighting, ap=actor.snap().dude.ap)  # fmt: skip
+    return bool(dropped)
+
+
 def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
     """Kill every `kind` on this map, without loading for luck: each fight starts healed (`heal`: a rest, or
     stimpaks) and is fought out. A death is returned for the route runner to load its checkpoint. No saves in here: a
@@ -192,7 +234,15 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
     log.emit("hunt_start", species=kind, foes=known)
     off_map_since = None
 
+    def prep() -> None:  # a fight a foe began: a flare first, where its light costs the shot
+        here, near = actor.snap().dude.tile, foes_of(actor, kind)
+        if near:
+            light_up(actor, min(near, key=lambda c: geometry.distance(c.tile, here)))
+
+    actor.forced_prep = prep
+
     def done(why: str) -> dict:
+        actor.forced_prep = None
         log.emit("hunt_end", why=why, kills=kills, heals=heals)
         return {"why": why, "kills": kills, "heals": heals}
 
@@ -235,6 +285,8 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             group = [target] + [c for c in others if noticed_by(c, s.dude.tile)]
             if len(group) > 1 and lure(actor, target, others):
                 continue
+            if light_up(actor, target):
+                continue  # the odds read again, in the flare's light
             chance = odds.assess(actor, group, [c for c in left if c not in group])
             log.emit(
                 "odds", foes=len(group), win=round(chance.win, 3), hp_left=round(chance.hp_left, 1),

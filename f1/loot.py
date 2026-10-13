@@ -198,8 +198,8 @@ def worth(pid: int, w: Wants, beside: tuple[int, ...] = ()) -> str | None:
         return "medicine"
     if pid in BOOKS:
         return "book"
-    if pid in PID_FLARES:
-        return "light"
+    if pid == PID_FLARES[0]:
+        return "light"  # not a lit one: it burns out, and one lying on the ground lights a fight (quests.light_up)
     if kind == "ammo":
         guns = [g.pid for g in w.guns if weapons.uses_ammo(g.pid)] + [b for b in beside if weapons.uses_ammo(b)]
         if any(weapons.fits(g, pid) for g in guns):

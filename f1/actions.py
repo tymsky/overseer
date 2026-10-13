@@ -194,6 +194,8 @@ class Actor(MovementActions, InteractionActions, InventoryActions, CombatActions
 
     # a fight a foe started that the gate refuses: left by the nearest exit (a route that must stay sets it False)
     leave_refused = True
+    # called on the player's first turn of a fight a foe started, before the gate weighs it (a hunt lights a flare)
+    forced_prep = None
 
     def __init__(self, pid: int, log: EventLog) -> None:
         self.pid = pid

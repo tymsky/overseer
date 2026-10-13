@@ -1,6 +1,6 @@
 """Agent route tasks for sands."""
 
-from f1 import dialogue, quests, win32
+from f1 import dialogue, quests, win32, worldmap
 from f1.actions import PID_STIMPAK, Actor
 from f1.agent_junktown import (
     ARADESH_REWARD,
@@ -48,6 +48,9 @@ def scorpion_quest(actor: Actor) -> bool:
     return quests.gvar(actor, GVAR_RADSCORPION_SEED) >= 1
 
 
+CAVES_SECTION = 2  # Shady Sands' town map: the third entrance, the caves once seen (unmeasured)
+
+
 def seth_to_the_caves(actor: Actor) -> bool:
     if not on_map(actor, "CAVES"):
         quests.talk(actor, "Peasant", SETH_CAVES, near=SETH_POST)
@@ -55,7 +58,18 @@ def seth_to_the_caves(actor: Actor) -> bool:
 
 
 def clear_the_caves(actor: Actor) -> bool:
-    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0:
+    """Every radscorpion killed. A fight the odds gate refused is fled to the world map, where the party stands on
+    Shady Sands' spot (a click on it entered SHADYW, not the caves): the next try enters again by the town map's third
+    entrance, else walks to Seth, who leads to the caves again; the hunt heals before its next fight."""
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0 and not on_map(actor, "CAVES"):
+        if actor.snap().screen == "worldmap":
+            worldmap.enter_here(actor.pid, CAVES_SECTION)
+            win32.wait_for(lambda: actor.snap().screen == "map", 30, 0.5)
+        entered = actor.snap().map_name
+        if not on_map(actor, "CAVES"):
+            seth_to_the_caves(actor)
+        actor.log.emit("caves_again", entered=entered, now=actor.snap().map_name)
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0 and on_map(actor, "CAVES"):
         quests.hunt(actor, "Radscorpion")
     return quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0
 

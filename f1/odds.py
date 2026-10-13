@@ -137,6 +137,15 @@ def fight(me: Attacker, foes: list[Attacker], trials: int = 2000, max_turns: int
 # --- from the running game ------------------------------------------------------------------------------------------
 
 
+def closing_tile(dude: int, foe: int, dist: int) -> int:
+    """Where a foe closing in stands when it is shot from `dist` hexes: the tile that far from the player nearest to
+    the foe (the foe's own tile when it is no farther). The player's own light (4 hexes, f1.lightmap) lights it more
+    than the foe's tile far off, in a dark cave."""
+    if geometry.distance(dude, foe) <= dist:
+        return foe
+    return min(geometry.ring(dude, dist), key=lambda t: (geometry.distance(t, foe), t))
+
+
 def visible_light(mem, elevation: int, tile: int) -> int:
     """object.c obj_get_visible_light for a critter (not the player): the tile's light, at least the ambient one."""
     return light.of_object(mem, elevation, tile)
@@ -204,8 +213,10 @@ def against(actor, foes: list, option: weapons.Option | None = None) -> Odds:
     ranged = o is not None and weapons.attack_type(pid) == "ranged"
     first = foes[0]
     dist = geometry.distance(first.tile, s.dude.tile)
+    where = first.tile
     if ranged and not armed_at_range(mem, first):
         dist = min(dist, CLOSE_RANGE)  # the fight closes in on a foe without a gun (Actor.fight's tactics)
+        where = closing_tile(s.dude.tile, first.tile, dist)  # and is fought in the light there, not where it stands
     hit = to_hit(
         o.skill_value if o else actor.skills().get("unarmed", 0),
         (knowledge.proto(first.pid) or {}).get("stats", [0] * 35)[STAT_AC],
@@ -214,7 +225,7 @@ def against(actor, foes: list, option: weapons.Option | None = None) -> Odds:
         pe=pe,
         st_short=max(0, (w or {}).get("min_st", 0) - st),
         big=first.multihex,
-        light=visible_light(mem, first.elevation, first.tile),
+        light=visible_light(mem, first.elevation, where),
     )
     melee = me_stats[STAT_MELEE] if not ranged else 0
     dmg = (w["min_damage"], w["max_damage"] + melee) if w else (1, melee + 2)

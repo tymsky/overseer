@@ -237,6 +237,11 @@ class CombatActions:
         `leave_refused`; when no way out is found it is fought."""
         self.log.emit("action_start", action="fight", forced=forced)
         if forced and self.in_combat():
+            if self.forced_prep is not None:  # on the player's turn, so the gate weighs what it changed
+                with clock.fast(self.pid):
+                    win32.wait_for(lambda: self.my_turn() or not self.in_combat(), 45, 0.1)
+                if self.in_combat() and self.my_turn():
+                    self.forced_prep()
             chance = self.weigh_forced()
             if chance is not None and not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
                 from f1 import quests
