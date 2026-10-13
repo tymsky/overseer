@@ -15,8 +15,8 @@ import time
 
 from f1 import geometry, nav, quests, scripts, session, state, win32
 from f1.actions import PID_STIMPAK, Actor
-from f1.idealist import experience, karma
-from f1.routes import Step, heal_below, on_map, travel
+from f1.idealist_support import experience, karma
+from f1.route_support import Step, heal_below, on_map, travel
 
 PID_TURBO, PID_MFC, PID_POWER_ARMOR = 233, 39, 3
 OUTER = frozenset({"genraidr", "raidgrd", "tolya", "petrox", "diana"})  # scripts: the counted raiders outside the room
@@ -45,7 +45,7 @@ def charges(actor: Actor) -> int:
 
 def ready(actor: Actor) -> bool:
     """The Turbo with 30+ charges, 5+ stimpaks, the Powered Armor worn (the plan's minimum for the camp)."""
-    from f1.routes import wearing
+    from f1.route_support import wearing
 
     if actor.snap().screen == "map":
         if actor._count(PID_POWER_ARMOR) and not wearing(actor, PID_POWER_ARMOR):

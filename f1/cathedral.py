@@ -15,22 +15,19 @@ sterility line (IN 7) needs. Speech is 110+: Morpheus's roll (103) and the Maste
 
 from f1 import quests
 from f1.actions import PID_STIMPAK, Actor
-from f1.idealist import experience, hands_empty, karma
-from f1.routes import (
+from f1.agent_boneyard import PID_ROBES
+from f1.agent_cathedral import (
     MASTER_TALK,
     MORPHEUS_TAKE_ME,
-    PID_ROBES,
     TOP_FLOOR_SHELVES,
-    Step,
     lashers_badge,
-    on_map,
     out_of_the_lair,
     red_door_open,
     stairs,
     the_ending,
-    travel,
-    wearing,
 )
+from f1.idealist_support import experience, hands_empty, karma
+from f1.route_support import Step, on_map, travel, wearing
 
 PID_POWER_ARMOR = 3
 SHELF_STIMPAKS = 6  # below this many the top floor's shelves are looted (2 stimpaks and a first aid kit there)

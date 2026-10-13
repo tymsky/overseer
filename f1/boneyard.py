@@ -16,19 +16,10 @@ from collections.abc import Callable
 
 from f1 import dialogue, geometry, knowledge, loot, nav, odds, quests, scripts, state, win32
 from f1.actions import PID_STIMPAK, Actor
-from f1.idealist import day, experience, hands_empty, karma, rearm
-from f1.routes import (
-    PID_ROBES,
-    ZACK_TRADE,
-    Step,
-    heal_below,
-    in_town,
-    on_map,
-    robes_from_the_floor,
-    settle,
-    stairs,
-    travel,
-)
+from f1.agent_boneyard import PID_ROBES, ZACK_TRADE, robes_from_the_floor
+from f1.agent_cathedral import stairs
+from f1.idealist_support import day, experience, hands_empty, karma, rearm
+from f1.route_support import Step, heal_below, in_town, on_map, settle, travel
 
 INVADED_DAY = 90  # GVAR 148 FOLLOWERS_INVADED_DATE, read on entering LAFOLLWR, LABLADES, LAGUNRUN
 PID_JUNK, PID_TRANSMISSION, PID_TURBO, PID_PLASMA_RIFLE = 98, 238, 233, 15

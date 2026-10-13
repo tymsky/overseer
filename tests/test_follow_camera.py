@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from f1 import actions, geometry, session
+from f1 import action_movement, actions, geometry, session
 
 
 def centred(tile: int) -> geometry.Camera:
@@ -21,7 +21,7 @@ def actor(monkeypatch):
     pressed: list = []
     monkeypatch.setattr(session, "press", lambda key, *a, **k: pressed.append(key))
     monkeypatch.setattr(session, "press_keys", lambda keys, *a, **k: pressed.extend(keys))
-    monkeypatch.setattr(actions.time, "sleep", lambda s: None)
+    monkeypatch.setattr(action_movement.time, "sleep", lambda s: None)
     a = object.__new__(actions.Actor)
     a.pressed = pressed
     session.use_copy(Path("copy/FALLOUTW.EXE"), None, headless=True, follows=True)

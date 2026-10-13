@@ -1,0 +1,328 @@
+"""Route execution, checkpoint preparation and failure recovery."""
+
+import contextlib
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+from f1 import chargen, clock, flows, knowledge, loot, session, state, watchdog
+from f1.actions import Actor
+from f1.engine_map import Obj
+from f1.memory import ReadError
+from f1.route_support import (
+    Step,
+    heal_up,
+    hour,
+    settle,
+)
+from f1.telemetry import EventLog
+
+UNARMED_MAPS = ("CHILDRN", "MSTRLR", "MBENT", "MBSTRG", "MBVATS")  # a weapon in a hand slot turns their people hostile
+
+TOWN_SWEEP = 20  # hexes round the Agent that a checkpoint's loot sweep covers in a town
+
+# towns whose guards walk up to a drawn gun: the talk blocks the save (Junktown's gate, a full run, twice 27 s)
+TOWN_MAPS = (
+    "SHADYW", "SHADYE", "JUNKENT", "JUNKKILL", "JUNKCSNO", "VAULT13", "HUBENT", "HUBDWNTN", "HUBHEIGT", "HUBOLDTN",
+    "HUBWATER", "BROHDENT", "BROHD12", "BROHD34", "LAADYTUM", "LABLADES", "LAFOLLWR", "LAGUNRUN", "CHILDEAD",
+)  # fmt: skip
+
+
+def loadout(actor: Actor) -> tuple:
+    """The kinds of weapon and ammunition carried: when they change, the best weapon may be another (the rounds a
+    fight spends do not count: a readying at every checkpoint drew the gun in Junktown)."""
+    kinds = ("weapon", "ammo")
+    return tuple(
+        sorted({p for _, p, q in actor.items() if q > 0 and (knowledge.proto(p) or {}).get("item_type") in kinds})
+    )
+
+
+def prepare(actor: Actor, carried: list) -> None:
+    """At the route's start, after each reload and at each checkpoint (so that a reload comes back to it): HP made up
+    by rest or stimpaks below 75 %, and the best weapon taken up when the weapons or ammunition carried changed,
+    then holstered (a fight draws it; guards talk to a drawn gun). A full run went into Vault 12 with a knife, two
+    boxes of 10mm in the pack and HP 22 of 35: the Overseer's ammunition came after the last readying, and nothing
+    healed after the sewers. Not where a weapon in a hand slot makes enemies (UNARMED_MAPS)."""
+    if not hasattr(actor, "mem"):
+        return
+    s = actor.snap()
+    if s.screen != "map" or s.dude is None or actor.in_combat():
+        return
+    # what lies about free for the taking, before the save so that the checkpoint keeps it. Not on the base's and
+    # the Cathedral's floors (no place to roam), and in a town only near and by day: people keep their houses at night
+    # (Killian's intruder talk from 19:00 spoiled Kenji's coming, a full run at Full HD), and walking into places can
+    # start what a route does later.
+    if not any(m in s.map_name for m in UNARMED_MAPS):
+        in_town = any(m in s.map_name for m in TOWN_MAPS)
+        if not in_town:
+            loot.sweep(actor)
+        elif 7 <= hour(actor) < 19:
+            loot.sweep(actor, max_hexes=TOWN_SWEEP)
+        s = actor.snap()
+    heal_up(actor, 0.75)
+    now = loadout(actor)
+    if any(m in s.map_name for m in UNARMED_MAPS + TOWN_MAPS):
+        # put away (a fight drew it: after Kenji a townsman came to the gun, and his talk blocked the next steps'
+        # inventory, a full run); readied at the next checkpoint out of town
+        if actor.weapon() is not None:
+            actor.holster(True)
+        return
+    if now != (carried[0] if carried else None):
+        if actor.ready_weapon().ok:
+            actor.holster(True)
+        carried[:] = [now]
+
+
+def ensure_preferences(actor: Actor, prefs: dict[str, int] | str | None) -> None:
+    """A save brings back its own preferences (options.c load_options): set ours when they differ (flows.BY_CHARACTER:
+    those of the character in the game)."""
+    if prefs == flows.BY_CHARACTER:
+        prefs = flows.prefs_for(actor.mem)
+    if prefs and any(actor.mem.glob(name) != value for name, value in prefs.items()):
+        actor.log.emit("preferences", **flows.set_preferences(actor.pid, prefs))
+
+
+# a step that raised one of these failed: the checkpoint takes over (OwnerActive is not caught: it stops the run)
+# Fail fast: only the game's own troubles fail a step: memory gone mid-read, a flow or session that would not
+# go, the watchdog's hang. A KeyError, IndexError, AttributeError, ValueError or TypeError is a bug in our code: it is
+# not caught, the run stops at once with its traceback and the game's state (main).
+STEP_ERRORS = (
+    ReadError,
+    flows.FlowError,
+    session.SessionError,
+    watchdog.Stuck,
+)
+
+
+def death_screen(s: state.Snapshot) -> bool:
+    """The death picture: a full-screen window over a game already reset (level 1, no XP, the player's HP back to
+    the start's). It stays some seconds before the main menu: the Mother Deathclaw's kill ended a step on it, with HP
+    30 read, and the runner took it for a plain failure and gave up instead of loading."""
+    return s.screen.startswith("window") and s.level == 1 and getattr(s, "experience", None) == 0
+
+
+def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.Snapshot | None, bool]:
+    """One try of step `number` (1-based), logged and timed: (its own verdict, whether the player died, the game
+    after it, whether the game got stuck: the watchdog saw nothing move, or the game is gone, then with no
+    snapshot). A step that crashed failed."""
+    log = actor.log
+    log.emit("objective", text=step.name, step=number)
+    t0 = time.monotonic()
+    watchdog.clear()
+    stuck = False
+    try:
+        ok = step.run(actor)
+    except STEP_ERRORS as e:
+        log.emit("step_error", step=step.name, error=repr(e)[:300])
+        ok, stuck = False, isinstance(e, watchdog.Stuck)
+    watchdog.clear()  # a trip after the step's last look belongs to no one now
+    if not actor.game_alive():  # a crash, or the game closed: a stuck game, restarted by the reload
+        log.emit("step_end", step=step.name, ok=False, seconds=round(time.monotonic() - t0, 1), crashed=True)
+        return False, False, None, True
+    s = actor.snap()
+    died = not (ok and step.final) and (s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or death_screen(s))
+    rads = actor.mem.i32(s.dude.address + Obj.CRITTER_RADIATION) if s.dude and hasattr(actor, "mem") else None
+    log.emit(
+        "step_end", step=step.name, ok=ok and not died, seconds=round(time.monotonic() - t0, 1),
+        hp=s.dude.hp if s.dude else None, rads=rads,
+    )  # fmt: skip
+    return ok, died, s, stuck
+
+
+def checkpoint(
+    actor: Actor, number: int, level: int, leveled: int, level_up: Callable[[int], dict] | None, carried: list
+) -> tuple[bool, int]:
+    """After checkpoint step `number`: a talk left open settled (someone walked up; it blocks the character screen
+    and the save), the level-up spent when the level rose past `leveled`, prepare, then the quicksave to slot 1.
+    (saved, the level spent up to). Raises watchdog.Stuck when its own screens hang."""
+    settle(actor)
+    if level_up is not None and level > leveled and not actor.in_combat():
+        try:
+            spent = level_up(actor.pid)
+        except (chargen.ChargenError, ReadError, session.SessionError) as e:  # never stops the route
+            spent = {"ok": False, "why": repr(e)[:200]}
+        actor.log.emit("level_up", level=level, **spent)
+        leveled = level if spent.get("ok") else leveled
+    prepare(actor, carried)
+    name = f"route {number}"
+    saved = actor.quicksave(1, name).ok or (settle(actor) and actor.quicksave(1, name).ok)
+    return saved, leveled
+
+
+def reload_checkpoint(actor: Actor, prefs: dict[str, int] | str | None, carried: list) -> bool:
+    """Slot 1 loaded from the main menu (three tries: once the load came back to the world map after 60 s),
+    the actor attached to the new game, the preferences and prepare again. False: it would not load."""
+    log = actor.log
+    actor.close()
+    loot.forget()  # the load puts the finds back
+    if not actor.game_alive():  # a crash: the game again, then the checkpoint
+        try:
+            actor.pid = session.start()["pid"]
+        except session.SessionError as e:
+            log.emit("restart_failed", error=repr(e)[:300])
+            return False
+        watchdog.watch(actor.pid)
+        log.emit("restarted", pid=actor.pid)
+    for attempt in range(3):
+        try:
+            flows.load_from_menu(actor.pid, 1)
+            break
+        except (flows.FlowError, session.SessionError) as e:
+            log.emit("load_failed", attempt=attempt + 1, error=repr(e)[:200])
+    else:
+        return False
+    actor.__init__(actor.pid, log)
+    carried.clear()  # the reloaded game carries what the checkpoint did
+    try:
+        ensure_preferences(actor, prefs)
+        prepare(actor, carried)
+    except (
+        watchdog.Stuck,
+        ReadError,
+    ) as e:  # the next step starts from wherever this left the game (a crash: the next step's own check sees it)
+        log.emit("step_error", step="after the reload", error=repr(e)[:300])
+    return True
+
+
+def run(
+    actor: Actor,
+    steps: list[Step],
+    start: int = 1,
+    level_up: Callable[[int], dict] | None = None,
+    prefs: dict[str, int] | str | None = None,
+    exploits: bool | None = None,
+    on_step: Callable[[int], None] | None = None,
+) -> dict:
+    """Run steps from `start` (1-based). `on_step(i)` is told each step's index (0-based) before it runs. Starting mid-way assumes slot 1 holds the checkpoint before it. With
+    `level_up`, a checkpoint first spends a level-up when the level rose (the game adds the skill points only when
+    the character screen opens, so the level is what tells). With `prefs`, the game's preferences are made so at the
+    start and after every reload.
+
+    No reloading for luck: a step that fails is tried again where the game stands, never loaded for (a roll's outcome
+    stands); past its tries an optional step is skipped and a required one ends the route. Only a death or a stuck
+    game loads the last checkpoint.
+
+    A step marked `exploit` runs only when `exploits` is true; None takes it from the build of the character in the
+    game (chargen.Build.exploits, off by default)."""
+    log, i, loads, leveled = actor.log, start - 1, {}, 0
+    fails: dict[str, int] = {}
+    skipped: list[str] = []
+    last_failure: dict[str, tuple] = {}  # where the game stood after a step's last failure (fail fast)
+    last_checkpoint = max((k for k in range(start - 1) if steps[k].checkpoint), default=-1)
+    if exploits is None:  # the character's build decides (off for a name that is not ours, or a fake game)
+        mem = getattr(actor, "mem", None)
+        build = chargen.build_of(state.character_name(mem)) if mem is not None else None
+        exploits = bool(build and build.exploits)
+    log.emit("route_start", steps=len(steps), exploits=exploits)
+    carried: list = []  # the loadout the weapon was last readied for
+    try:
+        ensure_preferences(actor, prefs)
+        prepare(actor, carried)
+    except (
+        watchdog.Stuck,
+        ReadError,
+    ) as e:  # the first step starts from wherever this left the game (a crash: the next step's own check sees it)
+        log.emit("step_error", step="the start", error=repr(e)[:300])
+    while i < len(steps):
+        step = steps[i]
+        if step.exploit and not exploits:  # not for this character
+            log.emit("skipped", step=step.name, why="exploit")
+            skipped.append(step.name)
+            i += 1
+            continue
+        if on_step:
+            on_step(i)
+        ok, died, s, stuck = try_step(actor, step, i + 1)
+        if ok and not died and step.checkpoint:
+            try:
+                saved, leveled = checkpoint(actor, i + 1, s.level, leveled, level_up, carried)
+            except (watchdog.Stuck, ReadError) as e:  # its screens hung, or the game crashed under it: back to the last
+                # one (the Hub's farm: the game's process ended during the checkpoint's loot sweep, and the
+                # ReadError stopped the route instead of the restart a crash in a step gets)
+                if isinstance(e, ReadError) and actor.game_alive():
+                    raise
+                log.emit("step_error", step=step.name, error=repr(e)[:300])
+                ok, stuck = False, True
+            else:
+                if saved:  # an unsaved checkpoint must not become the place a reload resumes from
+                    last_checkpoint = i
+                else:
+                    log.emit("checkpoint_failed", step=step.name)
+        if ok and not died:
+            i += 1
+            continue
+        if not died and not stuck:  # the failure stands; tried again in place, never loaded for
+            fails[step.name] = fails.get(step.name, 0) + 1
+            where = (s.map_name, s.elevation, s.dude.tile if s.dude else None, s.dude.hp if s.dude else None)
+            if where == last_failure.get(step.name) and not step.optional:  # fail fast: again, and nothing changed
+                why = "no progress: failed again and the game did not change"
+                log.emit("route_end", ok=False, at=step.name, why=why, loads=loads, fails=fails, skipped=skipped)
+                return {"ok": False, "at": step.name, "why": why, "loads": loads, "fails": fails, "skipped": skipped}
+            last_failure[step.name] = where
+            if fails[step.name] < step.tries:
+                log.emit("retry", step=step.name, tries=fails[step.name])
+                continue
+            if step.optional:
+                log.emit("skipped", step=step.name, tries=fails[step.name])
+                skipped.append(step.name)
+                i += 1
+                continue
+            log.emit("route_end", ok=False, at=step.name, loads=loads, fails=fails, skipped=skipped)
+            return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
+        failed = steps[last_checkpoint + 1] if last_checkpoint + 1 < len(steps) else step
+        loads[failed.name] = loads.get(failed.name, 0) + 1
+        if loads[failed.name] > failed.tries:
+            log.emit("route_end", ok=False, at=step.name, loads=loads, fails=fails, skipped=skipped)
+            return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
+        log.emit("recover", why="died" if died else f"stuck: {step.name}", loads=loads[failed.name])
+        if not reload_checkpoint(actor, prefs, carried):
+            log.emit("route_end", ok=False, at=step.name, loads=loads, why="the checkpoint would not load")
+            return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
+        i = last_checkpoint + 1
+    log.emit("route_end", ok=True, loads=loads, fails=fails, skipped=skipped)
+    return {"ok": True, "loads": loads, "fails": fails, "skipped": skipped}
+
+
+def fail_fast(actor: Actor, error: BaseException) -> None:
+    """Fail fast: the error, its traceback and the game as it stood, in the run's events."""
+    import traceback
+
+    try:
+        s = actor.snap()
+        where = {"screen": s.screen, "map": s.map_name, "tile": s.dude.tile if s.dude else None}
+    except (ReadError, watchdog.Stuck, OSError) as e:  # the game may be what failed
+        where = {"unreadable": repr(e)[:200]}
+    actor.log.emit(
+        "route_error", error=repr(error)[:300], traceback=traceback.format_exc()[-3000:], **where
+    )  # fmt: skip
+
+
+def _drive(
+    steps: list[Step],
+    start: int,
+    speed: float | None,
+    run_dir: Path,
+    on_step: Callable[[Actor, int], None] | None = None,
+) -> int:
+    actor = Actor(session.game_pid(), EventLog(run_dir / "events.jsonl"))
+    if speed:  # a test run's waits at a faster clock, none at the end
+        actor.log.emit("clock", **clock.set_fast(actor.pid, speed).__dict__)
+    elif left := clock.reset(actor.pid):  # a killed test run left its speed in the game
+        actor.log.emit("clock_reset", **left.__dict__)
+    dog = watchdog.Watchdog(actor.pid, actor.log)
+    dog.start()
+    try:
+        try:
+            hook = (lambda i: on_step(actor, i)) if on_step else None
+            result = run(actor, steps, start, level_up=chargen.level_up, prefs=flows.BY_CHARACTER, on_step=hook)
+        except Exception as e:  # fail fast: a bug stops the run at once; what it saw goes in the events first
+            fail_fast(actor, e)
+            raise
+        print(result, f"(events: {run_dir / 'events.jsonl'})")
+        return 0 if result["ok"] else 1
+    finally:
+        dog.stop()
+        if speed:
+            with contextlib.suppress(clock.ClockError):  # the game may be gone
+                clock.set_fast(actor.pid, 1)
+        actor.close()

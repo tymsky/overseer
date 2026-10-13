@@ -18,10 +18,33 @@ INSTANCE = paths.INSTANCE
 ROUTE_MODULES = (
     "f1/routes.py",
     "f1/idealist.py",
+    "f1/route_support.py",
+    "f1/route_runner.py",
+    "f1/agent_sands.py",
+    "f1/agent_junktown.py",
+    "f1/agent_hub.py",
+    "f1/agent_necropolis.py",
+    "f1/agent_glow.py",
+    "f1/agent_brotherhood.py",
+    "f1/agent_boneyard.py",
+    "f1/agent_cathedral.py",
+    "f1/agent_military.py",
+    "f1/idealist_support.py",
+    "f1/idealist_sands.py",
+    "f1/idealist_vault15.py",
+    "f1/idealist_junktown.py",
+    "f1/idealist_hub.py",
+    "f1/idealist_necropolis.py",
+    "f1/idealist_vault13.py",
+    "f1/idealist_trading.py",
+    "f1/idealist_glow.py",
+    "f1/idealist_brotherhood.py",
+    "f1/idealist_hub_rescue.py",
     "f1/boneyard.py",
     "f1/military.py",
     "f1/raiders.py",
     "f1/watershed.py",
+    "f1/cathedral.py",
 )
 
 
@@ -52,6 +75,15 @@ def test_the_plan_finder_sees_the_plans() -> None:
     names = {name for path in ROUTE_MODULES for _l, name, _p, _f in plan_lists(ROOT / path)}
     assert {"HARRY_PEACE", "GARL_FREE", "THERESA_CALM", "KATRINA_QUESTIONS"} <= names
     assert "TOWN_MAPS" not in names and "GIZMO_GANG" not in names
+
+
+def test_every_regional_module_scope_is_checked() -> None:
+    regional = {
+        path.relative_to(ROOT).as_posix()
+        for pattern in ("agent_*.py", "idealist*.py", "route_*.py")
+        for path in (ROOT / "f1").glob(pattern)
+    }
+    assert regional <= set(ROUTE_MODULES)
 
 
 @pytest.mark.skipif(not (INSTANCE / "MASTER.DAT").exists(), reason="instance not built")

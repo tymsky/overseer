@@ -3,7 +3,7 @@ fought (Actor.fight forced, weigh_forced), offline with a bare Actor."""
 
 from types import SimpleNamespace
 
-from f1 import actions, odds, weapons
+from f1 import actions, odds, weapons, win32
 
 PISTOL, KNUCKLES = 0x08, 0x15
 
@@ -27,7 +27,7 @@ def bare_actor(monkeypatch, ap: int = 6) -> actions.Actor:
     a.calls = []
     a.snap_ = SimpleNamespace(dude=SimpleNamespace(ap=ap, tile=100, hp=40), screen="map")
     a.snap = lambda: a.snap_
-    monkeypatch.setattr(actions.win32, "wait_for", lambda cond, *x, **k: cond())
+    monkeypatch.setattr(win32, "wait_for", lambda cond, *x, **k: cond())
     return a
 
 

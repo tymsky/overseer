@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from f1 import actions, geometry, loot, nav, saves, session, state, world
+from f1 import actions, geometry, loot, nav, saves, session, state, ui, watchdog, win32, world
+from f1.engine_map import Obj
 
 KNIFE = 0x04
 
@@ -27,7 +28,7 @@ class Mem:
         self.n = items
 
     def i32(self, address: int) -> int:
-        return self.n if address == 0x5000 + actions.Obj.INV_LENGTH else 0
+        return self.n if address == 0x5000 + Obj.INV_LENGTH else 0
 
     def glob(self, name: str) -> int:
         return 0
@@ -71,7 +72,7 @@ def test_quicksave_and_quickload_go_through_the_save_screens(monkeypatch) -> Non
     calls: list = []
     monkeypatch.setattr(saves, "save", lambda pid, slot, text: calls.append(("save", slot, text)) or [{}] * 9)
     monkeypatch.setattr(saves, "load", lambda pid, slot: calls.append(("load", slot)) or [{}] * 9)
-    monkeypatch.setattr(actions.watchdog, "clear", lambda: None)
+    monkeypatch.setattr(watchdog, "clear", lambda: None)
     assert a.quicksave(3, "agent start").ok
     assert a.quickload(expect_tile=100, slot=3).ok
     assert not a.quickload(expect_tile=101, slot=3).ok  # loaded, but not where the save stood
@@ -118,9 +119,9 @@ def test_a_rest_the_place_refuses_is_told_apart_from_a_missing_button(monkeypatc
         session, "press", lambda key, *x, **k: pressed.append(key) or (key == "esc" and screens.append("map"))
     )
     monkeypatch.setattr(session, "click", lambda *x, **k: None)
-    monkeypatch.setattr(actions.win32, "wait_for", lambda cond, *x, **k: cond())
-    clock = actions.ui.Button(11, 0, 764, 263, 791, 286, (-1, -1, -1, 504, -1, -1))
-    monkeypatch.setattr(actions.ui, "find", lambda mem, win, code: clock if code == 504 else None)
+    monkeypatch.setattr(win32, "wait_for", lambda cond, *x, **k: cond())
+    clock = ui.Button(11, 0, 764, 263, 791, 286, (-1, -1, -1, 504, -1, -1))
+    monkeypatch.setattr(ui, "find", lambda mem, win, code: clock if code == 504 else None)
     box = [(6, 0x14, 809, 427, 302, 127)]  # the clock's button answered with the engine's message box (measured)
     monkeypatch.setattr(state, "live_windows", lambda mem: [(1, 16, 640, 250, 640, 480), *box])
     assert a.rest("until morning").reason == "refused here"

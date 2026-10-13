@@ -16,8 +16,9 @@ from collections.abc import Callable
 
 from f1 import dialogue, geometry, nav, quests, scripts, session, state, watchdog, win32, world
 from f1.actions import Actor
-from f1.idealist import day, experience, hands_empty, karma, rest_until
-from f1.routes import Step, heal_up, in_town, on_map, pick_lock, settle, travel
+from f1.agent_military import pick_lock
+from f1.idealist_support import day, experience, hands_empty, karma, rest_until
+from f1.route_support import Step, heal_up, in_town, on_map, settle, travel
 
 INVASION_DAY = 110  # GVAR NECROPOLIS_INVADED_DATE: HOTELMAP/HALLDED1/WATRSHED map_enter
 SET_JOB = [
@@ -200,7 +201,7 @@ def evening(actor: Actor) -> bool:
 
 
 def hour_of(actor: Actor) -> float:
-    from f1.routes import hour
+    from f1.route_support import hour
 
     return hour(actor)
 
@@ -216,7 +217,7 @@ def set_reward(actor: Actor) -> bool:
 
 def garrets_fridge(actor: Actor) -> bool:
     """Garret walks to his fridge and pays once the player is within 4 hexes: followed 2 hexes behind."""
-    from f1.routes import PID_CAPS
+    from f1.agent_junktown import PID_CAPS
 
     caps0 = actor._count(PID_CAPS)
     end = time.monotonic() + 90

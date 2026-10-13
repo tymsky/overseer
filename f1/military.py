@@ -17,30 +17,25 @@ from collections.abc import Callable
 
 from f1 import dialogue, geometry, nav, quests, win32, worldmap
 from f1.actions import Actor
-from f1.boneyard import INVADED_DAY, to_map
-from f1.idealist import bos_floor, day, experience, hands_empty, karma
-from f1.routes import (
+from f1.agent_boneyard import PID_ROBES
+from f1.agent_brotherhood import out_of_the_bunker
+from f1.agent_military import (
     BY_VCONCOMP,
     GATE_PASS,
     KRUPPER_TALK,
     MB_DOOR,
-    PID_ROBES,
     VCONCOMP,
-    Step,
     guarded_walk,
-    heal_up,
-    in_town,
-    on_map,
     out_of_the_base,
-    out_of_the_bunker,
     past_krupper,
-    settle,
     to_the_vats,
-    travel,
     vats_computer,
     vats_interface,
-    wearing,
 )
+from f1.boneyard import INVADED_DAY, to_map
+from f1.idealist_brotherhood import bos_floor
+from f1.idealist_support import day, experience, hands_empty, karma
+from f1.route_support import Step, heal_up, in_town, on_map, settle, travel, wearing
 
 PID_POWER_ARMOR, PID_RADIO = 3, 100
 KATJA_JOIN = [
@@ -286,7 +281,7 @@ def escape(actor: Actor) -> bool:
 
 def _up_to_mbent(actor: Actor) -> bool:
     """out_of_the_base up to MBENT only: its MBVATS12 and MBSTRG12 parts (the same walks)."""
-    from f1.routes import MB_PAIN, VATS_LIFT, VATS_LIFT_UP, VATS_PAIN
+    from f1.agent_military import MB_PAIN, VATS_LIFT, VATS_LIFT_UP, VATS_PAIN
 
     if on_map(actor, "MBVATS12") and actor.snap().elevation == 1:
         guarded_walk(actor, {VATS_LIFT}, plan=KRUPPER_TALK + GATE_PASS)

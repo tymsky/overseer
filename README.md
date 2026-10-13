@@ -113,11 +113,13 @@ presence guard pauses the bot until you stop (it gives up after two minutes of u
 - `f1/engine_map.py` holds the addresses and structure layouts of the 1.1 exe; `f1/state.py` reads a snapshot of
   the game from them; `python -m f1.verify_exe` shows the evidence for each address.
   [docs/FORMATS.md](docs/FORMATS.md) has the game's file formats as the readers use them.
-- `f1/actions.py` has the verified actions (walk to a tile, talk, choose a reply, use an item, attack), each with a
-  precondition, input, a wait on the game's state and a check. `f1/nav.py` finds paths on the hex grid.
-- `f1/routes.py` runs a route: steps with their own checks, a save at each checkpoint, a reload and retry when a step
-  fails or the character dies. The routes themselves are in `f1/routes.py`, `f1/idealist.py` and the late-game
-  modules.
+- `f1/actions.py` keeps the `Actor` interface. Its movement, interaction, inventory, combat and screen actions live
+  in the `action_*` modules, each with a precondition, input, a wait on the game's state and a check.
+  `f1/nav.py` finds paths on the hex grid.
+- `f1/route_support.py` defines steps and reusable route operations; `f1/route_runner.py` executes them and keeps
+  checkpoints. Failed checks retry in place; only death or a stuck game reloads a checkpoint. The `agent_*` and
+  `idealist_*` modules keep regional tasks and their ordered steps; `f1/routes.py` and `f1/idealist.py` expose the
+  existing route names. [docs/MODULES.md](docs/MODULES.md) describes the boundaries and imports.
 
 ## Credits
 

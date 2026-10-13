@@ -6,8 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from f1 import routes, watchdog
-from f1.routes import Step
+from f1 import route_runner as routes
+from f1 import watchdog
+from f1.route_support import Step
 
 
 @dataclass
