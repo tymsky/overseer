@@ -484,8 +484,8 @@ IDEALIST_START = [
     # a Science check (the option shows only above its bound): on Hard, -10 to every non-combat skill, it did not show
     Step("Curtis's crop rotation", curtis, checkpoint=True, tries=1, optional=True),
     Step("a Scout Handbook (East)", lambda a: book_from(a, BOOKCASE_SHADYE)),
-    # the days away that SHADYWST.INT wants before it takes Tandi are spent in Vault 15
-    *VAULT_15,
+    # the days away that SHADYWST.INT wants before it takes Tandi are rested out: Vault 15 waits until after Junktown
+    # (at level 2 its radscorpions came over the risk bound in the burrows, where no exit grid offers a way out)
     Step("two days away", two_days_away, checkpoint=True),
     Step("back west: Tandi taken", tandi_taken, checkpoint=True),
     Step("Aradesh: Tandi is missing", tandi_quest),
@@ -494,6 +494,11 @@ IDEALIST_START = [
     Step("Garl lets her go", garl, checkpoint=True, tries=5),
     Step("Tandi home", tandi_home, checkpoint=True, tries=6),
     Step("Aradesh: the reward", tandi_reward, checkpoint=True),
+]
+
+IDEALIST_VAULT15 = [
+    *VAULT_15[:-1],  # not back to East: Tandi was taken and brought home before Junktown
+    Step("back to Shady Sands", lambda a: travel(a, "shady sands", 0).startswith("SHADY"), checkpoint=True, tries=6),
     # after Tandi is home: while she is gone Seth talks only of her (SETH.INT TanSeth), no trip to the caves
     Step("Seth: back to the caves (the dynamite)", back_to_the_caves, checkpoint=True),
     Step("the radscorpions left", the_rest_of_the_caves, checkpoint=True, tries=3, optional=True),

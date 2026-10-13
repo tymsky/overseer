@@ -11,6 +11,8 @@ idealist-start).
                       Kenji, the job, Gizmo's confession, the raid; Trish and Saul; a night in the Crash House and
                       Sinthia's hostage-taker talked down; Neal's urn taken while he sleeps and given back; Sherry's
                       testimony to Lars.
+    idealist_vault15  Vault 15 after Junktown: its three floors, the ropes, the rubble's XP, the dynamite; then Seth back
+                      to the caves, the cave wall blown, the antidote if it waited.
 """
 
 from f1.agent_brotherhood import (
@@ -295,6 +297,7 @@ from f1.idealist_sands import (
     CURTIS_ROTATION,
     GARL_TALKED_DOWN,
     IDEALIST_START,
+    IDEALIST_VAULT15,
     JARVIS_BED,
     JUNKKILL_RIFLE,
     KATRINA_QUESTIONS,
@@ -463,6 +466,7 @@ __all__ = [
     "IDEALIST_NECROPOLIS",
     "IDEALIST_START",
     "IDEALIST_VAULT13",
+    "IDEALIST_VAULT15",
     "IRWIN_JOB",
     "IRWIN_LEVEL",
     "IRWIN_PAID",
@@ -766,6 +770,7 @@ __all__ = [
 ROUTES = {
     "idealist_start": IDEALIST_START,
     "idealist_junktown": IDEALIST_JUNKTOWN,
+    "idealist_vault15": IDEALIST_VAULT15,
     "idealist_hub": IDEALIST_HUB,
     "idealist_necropolis": IDEALIST_NECROPOLIS,
     "idealist_vault13": IDEALIST_VAULT13,

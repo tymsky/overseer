@@ -31,6 +31,7 @@ CHAINS = {
     "idealist": (
         "idealist_start",
         "idealist_junktown",
+        "idealist_vault15",
         "idealist_hub",
         "idealist_necropolis",
         "idealist_vault13",
