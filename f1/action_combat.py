@@ -1,6 +1,21 @@
 """Attacks, combat movement and fight decisions for the public Actor."""
 
-from f1 import clock, geometry, knowledge, lof, nav, odds, perception, scene, scripts, session, state, weapons, win32
+from f1 import (
+    clock,
+    geometry,
+    knowledge,
+    lof,
+    nav,
+    odds,
+    perception,
+    risk,
+    scene,
+    scripts,
+    session,
+    state,
+    weapons,
+    win32,
+)
 from f1 import engine_map as em
 from f1.action_interaction import AIM_OFFSETS
 from f1.action_inventory import INVENTORY_AP, PID_STIMPAK
@@ -247,7 +262,7 @@ class CombatActions:
         forced: bool = False,
     ) -> Outcome:
         """Fight until combat is over: shoot the nearest foe in range with a gun (or punch an adjacent one), heal
-        with a stimpak below 45 % HP, end the turn when nothing more can be done. `spare`: scripts of critters that
+        with a stimpak below risk.heal_below, end the turn when nothing more can be done. `spare`: scripts of critters that
         must not be hit: a foe with one of them beyond it on the line of fire is not shot (a missed shot flies on
         and hits the first critter past its target with no roll, CE compute_attack: the Raiders' captive women).
         `forced`: a fight a foe started (no gate weighed it): weighed first (`weigh_forced`), and one the gate would
@@ -292,7 +307,10 @@ class CombatActions:
             if not self.in_combat():
                 continue
             s = self.snap()
-            low = s.dude.hp < 0.5 * self.max_hp and s.dude.ap >= 4 and self._count(PID_STIMPAK) > 0
+            # half the HP, or the near foes' turn of hits when more (risk.heal_below; two radscorpion stings took
+            # 22 of a level-2 player's 23, no stimpak used: an ironman run)
+            below = risk.heal_below(self.max_hp, risk.danger(self, self.enemies(only), s.dude.tile))
+            low = s.dude.hp < below and s.dude.ap >= 4 and self._count(PID_STIMPAK) > 0
             if low and self.use_on_self(PID_STIMPAK).ok:  # heal first: 4 AP for the screen still leaves a shot
                 acted = rounds
                 continue

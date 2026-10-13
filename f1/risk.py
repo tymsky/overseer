@@ -28,7 +28,8 @@ One attack (fallout1-ce combat.c, static analysis; `to_hit`, `_table`):
 Death: the hit points at 0 or below, or a critical row's DAM_DEAD (with its massive part when a d10 beats the stat).
 
 The player (Actor.fight's rules): at his turn's start a stimpak (the inventory's 4 AP each, 10 to 20 hit points: the
-proto's drug data) while he is under half his hit points; then the weakest foe in reach first (fewest hit points, then
+proto's drug data) while his hit points are under `heal_below`: half of them, or what the foes near him can take
+in one turn of plain hits when that is more; then the weakest foe in reach first (fewest hit points, then
 nearest), the nearest when none is; a melee weapon or fists walk to it (1 AP a hex); a gun out of reach walks into
 reach, and closes in on a foe with no gun while its to-hit is under GOOD_SHOT; a gun reloads when empty (2 AP) and
 fights with fists when the pack is dry; the AP left count as his AC until his next turn.
@@ -462,10 +463,39 @@ class _Model:
         return got
 
 
+NEAR = 2  # hexes: a foe this close reaches the player in its turn (hand to hand: a step and its attacks)
+
+
+def turn_damage(f: Fighter, rules: Rules) -> int:
+    """The most a foe's plain hits take in one turn (no criticals, no armour): the attacks its AP pay, each its
+    weapon's top roll (plus its melee damage hand to hand) at the difficulty's percent. A radscorpion on Rough:
+    2 x (2 + 6) x 125 % = 20, more than half the player's 30 at level 2 (an ironman run: two stings took 22)."""
+    w = f.weapon
+    top = w.max_damage + (f.melee if w.kind in ("unarmed", "melee") else 0)
+    return f.ap // max(1, w.ap) * top * DIFFICULTY_DAMAGE.get(rules.difficulty, 100) // 100
+
+
+def heal_below(max_hp: int, danger: int) -> float:
+    """The hit points under which a turn starts with a stimpak: half of them, or the near foes' turn of hits when
+    that is more, at most a stimpak's least heal under the top (so that a heal is never wasted on a full bar)."""
+    return max(max_hp / 2, min(danger, max_hp - STIMPAK_HEAL[0]))
+
+
+def danger(actor, critters, tile: int) -> int:
+    """The live foes' `turn_damage` for those within NEAR of TILE (fists or their proto's weapon: a gun's holder
+    further off is left out)."""
+    from f1 import geometry
+
+    rules = Rules(actor.mem.glob("combat_difficulty"))
+    near = [c for c in critters if geometry.distance(c.tile, tile) - (1 if c.multihex else 0) <= NEAR]
+    return sum(turn_damage(foe(c.pid, 1, hp=c.hp), rules) for c in near)
+
+
 def _player_turn(m: _Model, me: _Me, foes: list[_Foe], rng: random.Random) -> None:
     f = m.me
     ap = f.ap
-    while me.hp < f.max_hp / 2 and ap >= INVENTORY_AP and me.stimpaks > 0:
+    near = sum(turn_damage(x.f, m.rules) for x in foes if x.active and not x.out and x.dist <= NEAR)
+    while me.hp < heal_below(f.max_hp, near) and ap >= INVENTORY_AP and me.stimpaks > 0:
         ap -= INVENTORY_AP
         me.stimpaks -= 1
         me.hp = min(f.max_hp, me.hp + rng.randint(*STIMPAK_HEAL))
