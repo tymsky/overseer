@@ -57,10 +57,10 @@ def seth_to_the_caves(actor: Actor) -> bool:
     return win32.wait_for(lambda: on_map(actor, "CAVES") and actor.snap().screen == "map", 30, 0.5)
 
 
-def clear_the_caves(actor: Actor) -> bool:
-    """Every radscorpion killed. A fight the odds gate refused is fled to the world map, where the party stands on
-    Shady Sands' spot (a click on it entered SHADYW, not the caves): the next try enters again by the town map's third
-    entrance, else walks to Seth, who leads to the caves again; the hunt heals before its next fight."""
+def into_the_caves(actor: Actor) -> None:
+    """Back into the caves after a fight the odds gate refused was fled to the world map, where the party stands on
+    Shady Sands' spot (a click on it entered SHADYW, not the caves): by the town map's third entrance, else by Seth,
+    who leads there again."""
     if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0 and not on_map(actor, "CAVES"):
         if actor.snap().screen == "worldmap":
             worldmap.enter_here(actor.pid, CAVES_SECTION)
@@ -69,6 +69,11 @@ def clear_the_caves(actor: Actor) -> bool:
         if not on_map(actor, "CAVES"):
             seth_to_the_caves(actor)
         actor.log.emit("caves_again", entered=entered, now=actor.snap().map_name)
+
+
+def clear_the_caves(actor: Actor) -> bool:
+    """Every radscorpion killed (the hunt heals before each fight); a flight out is entered again first."""
+    into_the_caves(actor)
     if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0 and on_map(actor, "CAVES"):
         quests.hunt(actor, "Radscorpion")
     return quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0

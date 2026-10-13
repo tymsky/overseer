@@ -8,8 +8,9 @@ from f1.agent_junktown import (
     by_day,
 )
 from f1.agent_sands import (
+    GVAR_NUM_RADSCORPIONS,
     SETH_POST,
-    clear_the_caves,
+    into_the_caves,
     nest_reported,
     scorpion_quest,
     seth_to_the_caves,
@@ -184,6 +185,44 @@ def cook(actor: Actor) -> bool:
     praised = karma(actor) > k0 or any(dialogue.holds(chosen, "cook", 102) for _r, _o, chosen in steps)
     actor.log.emit("cook", praised=praised)
     return praised
+
+
+SCORPIONS = 9  # in the caves at the start (each carries a Scorpion Tail)
+
+
+def thin_the_caves(actor: Actor) -> bool:
+    """The first visit: every radscorpion the odds gate lets the player fight. The rest wait for the second visit
+    (after Tandi: levels and kit later, and the dynamite seals the nest), so as not to fight over the gate's bound
+    (an ironman run: one at full HP, both flares spent, came to a death bound of 0.205). Done when none is left, or
+    when the gate refused the next one and one lies dead for its tail."""
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0:
+        return True
+    into_the_caves(actor)
+    why = quests.hunt(actor, "Radscorpion")["why"] if on_map(actor, "CAVES") else "not in the caves"
+    left = quests.gvar(actor, GVAR_NUM_RADSCORPIONS)
+    if left == 0:
+        return True
+    if why.startswith(("odds", "fled")) and left < SCORPIONS:
+        into_the_caves(actor)  # a flight out: back in for the tail
+        actor.log.emit("caves_left", left=left, why=why)
+        return on_map(actor, "CAVES")
+    return False
+
+
+def nest_if_cleared(actor: Actor) -> bool:
+    """Aradesh's reward for the nest, once no radscorpion is left; with some left it waits for the second visit."""
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) > 0:
+        actor.log.emit("nest_later", left=quests.gvar(actor, GVAR_NUM_RADSCORPIONS))
+        return True
+    return nest_reported(actor)
+
+
+def the_rest_of_the_caves(actor: Actor) -> bool:
+    """The second visit: the radscorpions left from the first, as the gate allows."""
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0 or not on_map(actor, "CAVES"):
+        return True
+    quests.hunt(actor, "Radscorpion")
+    return quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0
 
 
 def scorpion_tail(actor: Actor) -> bool:
@@ -399,11 +438,11 @@ IDEALIST_START = [
     Step("the cook's compliment", cook, checkpoint=True, tries=1, optional=True),
     Step("Seth: to the caves", seth_to_the_caves, checkpoint=True),
     Step("the caves' floor: rounds and a stimpak", the_floor),
-    Step("the radscorpions", clear_the_caves, checkpoint=True, tries=6),
+    Step("the radscorpions", thin_the_caves, checkpoint=True, tries=6),
     Step("a Scorpion Tail", scorpion_tail),
     Step("out of the caves", lambda a: quests.leave_map(a)),
     Step("back to Shady Sands", lambda a: travel(a, "shady sands", 0).startswith("SHADY"), checkpoint=True, tries=6),
-    Step("Aradesh: the nest destroyed", nest_reported),
+    Step("Aradesh: the nest destroyed", nest_if_cleared),
     Step("Razlo's antidote", razlo_antidote, checkpoint=True),
     Step("Jarvis cured", jarvis, checkpoint=True),
     Step("to Shady Sands East", lambda a: quests.take_exit(a, "SHADYE")),
@@ -421,6 +460,7 @@ IDEALIST_START = [
     Step("Aradesh: the reward", tandi_reward, checkpoint=True),
     # after Tandi is home: while she is gone Seth talks only of her (SETH.INT TanSeth), no trip to the caves
     Step("Seth: back to the caves (the dynamite)", back_to_the_caves, checkpoint=True),
+    Step("the radscorpions left", the_rest_of_the_caves, checkpoint=True, tries=3, optional=True),
     # a Traps roll arms it: its outcome stands (no reloading for luck)
     Step("the cave wall blown", the_cave_wall, checkpoint=True, tries=1, optional=True),
     Step("out of the caves again", lambda a: not on_map(a, "CAVES") or quests.leave_map(a)),
