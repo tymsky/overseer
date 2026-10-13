@@ -162,21 +162,30 @@ class InventoryActions:
         ox, oy = origin
         line = self.mem.glob("disp_start")
         heavy = lambda: any(knowledge.says(m, *LOOT_TOO_HEAVY) for m in state.messages_since(self.mem, line))
+        windows = len(state.live_windows(self.mem))
+        asking = lambda: len(state.live_windows(self.mem)) > windows  # the how-many box over the loot screen
+        quantity = 1
         for _ in range(before + 2):
             left = self.mem.i32(body.address + 0x2C)
+            if asking():
+                # the box came after the wait below: answered now. With four games at once one stood unanswered for
+                # 5 s and the watchdog ended the run (a Vault 15 locker, live)
+                session.type_text(str(min(quantity, 999)))
+                session.press("enter")
+                win32.wait_for(lambda left=left: self.mem.i32(body.address + 0x2C) < left, 2, 0.05)
+                continue
             if left <= 0 or heavy():  # the game refused an item at the carry weight (LOOT_TOO_HEAVY; the Glow)
                 break
             arr = self.mem.u32(body.address + 0x34)
             quantity = self.mem.i32(arr + 4)
-            windows = len(state.live_windows(self.mem))
             self.drag(
                 ox + LOOT_BODY_SLOT[0], oy + LOOT_BODY_SLOT[1], ox + LOOT_PLAYER_LIST[0], oy + LOOT_PLAYER_LIST[1]
             )
-            if quantity > 1 and win32.wait_for(lambda n=windows: len(state.live_windows(self.mem)) > n, 1.5, 0.05):
+            if quantity > 1 and win32.wait_for(asking, 3.0, 0.05):
                 time.sleep(0.2)
                 session.type_text(str(min(quantity, 999)))
                 session.press("enter")
-            win32.wait_for(lambda left=left: self.mem.i32(body.address + 0x2C) < left, 2, 0.05)
+            win32.wait_for(lambda left=left: self.mem.i32(body.address + 0x2C) < left or asking(), 2, 0.05)
         after = self.mem.i32(body.address + 0x2C)
         if self.snap().screen == "loot":  # on the map an Escape opens the options menu (the rest's)
             session.press("esc")
