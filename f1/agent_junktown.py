@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import quests, win32
+from f1 import clock, quests, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.route_support import (
     TOWN_GREETINGS,
@@ -161,11 +161,18 @@ def by_day(actor: Actor) -> bool:
     until morning first. Killian keeps to his bed from 19:00 to 7:30 (KILLIAN.INT critter_p_proc) and walks to his
     counter after: at 6 a click on him only looked at him (twice, once at Full HD), at 8:01 he was still by
     his bed. So a morning rests until noon."""
-    ok = True
+    ok, rested = True, False
     if hour(actor) < 6 or hour(actor) >= 19:
-        ok = actor.rest("until morning").ok
+        ok, rested = actor.rest("until morning").ok, True
     if 6 <= hour(actor) < 9:
-        ok = actor.rest("until noon").ok and ok
+        ok, rested = actor.rest("until noon").ok and ok, True
+    if rested:
+        # the doors unlock only in a map update after 6:00 (KILDOOR1/2 map_update_p_proc), and a rest that ends at
+        # noon runs none: an ironman run stood locked in at noon, two tries 20 s apart. The updates come with the game
+        # time queue (a game minute apart, as read from CE; not measured here): 65 game seconds pass first
+        t0 = actor.snap().game_time
+        with clock.fast(actor.pid):
+            win32.wait_for(lambda: actor.snap().game_time >= t0 + 650, 90, 0.5)
     return ok
 
 
