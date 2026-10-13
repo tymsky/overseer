@@ -442,4 +442,8 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
                 refused.add(path[i])
         elif not out.ok:
             time.sleep(0.3)  # e.g. combat began, or the map changed under the step
+    if fight and actor.in_combat():  # a foe began it on the last step: weighed here, not left to the caller
+        out = actor.fight(forced=True)
+        if not out.ok:
+            return False, f"fight: {out.reason}"
     return False, "too many steps"

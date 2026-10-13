@@ -230,6 +230,7 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
     end = time.monotonic() + minutes * 60
     kills = heals = backs = 0
     tried_heal = False  # since the last fight
+    began = False  # the hunt pressed for the fight, after the odds accepted it
     known = len(foes_of(actor, kind))
     log.emit("hunt_start", species=kind, foes=known)
     off_map_since = None
@@ -258,8 +259,12 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             continue
         off_map_since = None
         if actor.in_combat():
-            actor.fight(min_hp=0)  # fought out: it began healed
-            tried_heal = False
+            # fought out when the hunt began it (weighed, healed); one a foe began is weighed first (a walk's last
+            # step: nine radscorpions fought unweighed, six stimpaks, a poisoned death)
+            fought = actor.fight(min_hp=0, forced=not began)
+            began = tried_heal = False
+            if fought.reason == "refused; fled":
+                return done("fled a refused fight")
             continue
         left = foes_of(actor, kind)
         if len(left) < known:
@@ -299,6 +304,7 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
                     continue
                 return done(f"odds {chance.win:.0%} (death bound {chance.death_high}): not a fight to begin")
             session.press("a")  # start combat; the fight loop takes it from there
+            began = True
             time.sleep(1.0)
             if not actor.in_combat():
                 time.sleep(1.0)
