@@ -279,6 +279,17 @@ def door_way(actor, goal: int, walls: doors.Walls | None = None, log=None) -> tu
 DOORS_ON_A_WAY = 8
 
 
+def open_way(actor, goal: int, walls: doors.Walls) -> bool:
+    """A way to GOAL with every closed door shut and the other exit grids kept off, by the bot's own search (no node
+    cap)."""
+    from f1 import nav
+
+    s = actor.snap()
+    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address, walls.on(s.map_name, s.elevation))
+    keep_off = frozenset(t for t in obs.exits if t != goal)
+    return nav.astar(s.dude.tile, {goal}, obs.blocked | keep_off) is not None
+
+
 def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> Result:
     """Every closed door on the way to GOAL opened in turn (each read back open from memory); a door that stays shut
     is walled (given back once its lock clears or it opens) and the way planned again."""
@@ -291,6 +302,12 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
         for w in walls.give_back(actor.mem, s.map_name):
             (log or actor.log.emit)("milestone", what="a door given back", tile=w.tile, by=w.by)
         path, shut = door_way(actor, goal, walls, log)
+        if path is None and open_way(actor, goal, walls):
+            # the engine's search stops at 2000 nodes: from Shady Sands West's east edge to its exit 7106 a walk round
+            # the walls is longer (an ironman run stood there, the way refused twice); nav.go_to walks it in legs
+            return Result(
+                True, "no closed door on a way past the engine's search", {"opened": opened, "walled": walled}
+            )
         if path is None:
             return Result(False, "no way even through the doors", {"opened": opened, "walled": walled})
         if not shut:
