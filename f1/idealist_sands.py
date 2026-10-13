@@ -152,9 +152,13 @@ def theresa(actor: Actor) -> bool:
 
 
 def book_from(actor: Actor, tile: int) -> bool:
-    """The Scout Handbook from the shelf on `tile`, read at once."""
+    """The Scout Handbook from the shelf on `tile` (and what else it holds: East's rope, for Vault 15), read at once.
+    Fails when the shelf gave nothing (a talk left open had made its loot a shop's barter)."""
     if actor._count(PID_SCOUT_HANDBOOK) == 0:
-        actor.loot(tile)
+        if dialogue.read(actor.mem).active:
+            quests.close_dialogue(actor)
+        if not actor.loot(tile).ok and not actor._count(PID_SCOUT_HANDBOOK):
+            return False
     return read_book(actor, PID_SCOUT_HANDBOOK)
 
 
@@ -294,6 +298,7 @@ def curtis(actor: Actor) -> bool:
     by_day(actor)
     actor.holster(True)
     quests.talk(actor, "curtis", CURTIS_ROTATION)
+    quests.close_dialogue(actor)  # without the rotation line (Science on Hard) the plan ends with the talk open
     return karma(actor) >= k0 + 2
 
 

@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from f1 import chargen, clock, flows, knowledge, loot, risk, session, state, watchdog
+from f1 import chargen, clock, dialogue, flows, knowledge, loot, risk, session, state, watchdog
 from f1.actions import Actor
 from f1.engine_map import Obj
 from f1.memory import ReadError
@@ -120,6 +120,12 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.S
     if not actor.game_alive():  # a crash, or the game closed: a stuck game, restarted by the reload
         log.emit("step_end", step=step.name, ok=False, seconds=round(time.monotonic() - t0, 1), crashed=True)
         return False, False, None, True
+    if not ok and getattr(actor, "mem", None) is not None and dialogue.read(actor.mem).active:
+        # a failed talk left open would meet the next step: Curtis's, then the bookcase's loot took the talk for a
+        # shop's barter and left the Scout Handbook and the rope behind (an ironman run, Vault 15 without a rope)
+        from f1 import quests
+
+        log.emit("talk_left_open", step=step.name, closed=quests.close_dialogue(actor))
     s = actor.snap()
     died = not (ok and step.final) and (s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or death_screen(s))
     rads = actor.mem.i32(s.dude.address + Obj.CRITTER_RADIATION) if s.dude and hasattr(actor, "mem") else None
