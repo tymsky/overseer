@@ -66,12 +66,14 @@ def test_the_idealist_starts_as_the_formulas_say() -> None:
     assert compute_skills(stats, [0] * 18, tags, traits, difficulty=2)["speech"] == 41
 
 
-def test_the_idealist_plan_puts_the_first_points_into_guns_then_travel() -> None:
+def test_the_idealist_plan_puts_the_first_points_into_guns_then_speech_for_garl() -> None:
+    """On Hard (-10 to the non-combat skills) Speech must reach 90 by level 3, where Garl's line needs 45 and its
+    roll (+10) cannot fail then: the measured case was 41 at level 3 with Outdoorsman first."""
     from f1.chargen import IDEALIST, IDEALIST_SKILLS
 
     tags = {SKILL_NAMES.index(s) for s in IDEALIST.tags}
-    values = {name: 0 for name in SKILL_NAMES} | {"small guns": 43, "outdoorsman": 55, "speech": 51}
-    assert plan_points(values, tags, 25, IDEALIST_SKILLS) == {"small guns": 12, "outdoorsman": 13}
-    values |= {"small guns": 55, "outdoorsman": 81}
-    # Speech toward 110 before anything else (51 + 2 x 15 = 81 here; the rest of the way at the next level)
-    assert plan_points(values, tags, 25, IDEALIST_SKILLS) == {"outdoorsman": 10, "speech": 15}
+    values = {name: 0 for name in SKILL_NAMES} | {"small guns": 43, "outdoorsman": 23, "speech": 41}
+    assert plan_points(values, tags, 25, IDEALIST_SKILLS) == {"small guns": 12, "speech": 13}
+    values |= {"small guns": 55, "speech": 67}
+    # Speech the rest of the way to 90 (67 + 2 x 12 = 91), then travel
+    assert plan_points(values, tags, 25, IDEALIST_SKILLS) == {"speech": 12, "outdoorsman": 13}
