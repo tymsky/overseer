@@ -7,7 +7,7 @@ camera with the arrow keys when the next point is off it, and fighting when comb
 
 import heapq
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from f1 import doors, geometry, state, traps, win32
 from f1.engine_map import Obj
@@ -327,6 +327,13 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
             return True, "arrived"
         walls = doors.WALLS.on(s.map_name, s.elevation)
         obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
+        if obs.exits and not goals & obs.exits.keys():
+            # a walk elsewhere keeps a hex off the exit grids (the Khans' camp, an ironman run: a walk to ammo on
+            # the floor ran along the edge band, ended a hex off its leg on a grid, and the map was left for the
+            # world map); kept only while a way remains
+            edge = {t for e in obs.exits for t in (e, *geometry.ring(e, 1))} - goals - {s.dude.tile}
+            if astar(s.dude.tile, goals, obs.passable_doors | edge) is not None:
+                obs = replace(obs, blocked=obs.blocked | edge)
         avoid = caller_avoid | (trap_tiles(actor, s.elevation) - goals - {s.dude.tile})
         if (
             avoid != caller_avoid
