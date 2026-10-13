@@ -44,6 +44,7 @@ from f1.route_support import (
 PID_ANTIDOTE, PID_SCOUT_HANDBOOK, PID_SCORPION_TAIL = 49, 86, 92
 
 RATIONS = (7, 9)  # WTRGRD.INT: the water line's hours, the corridor to the library full
+WAIT_STEP_PX = 60  # a walk east of the vault on the world map, stopped when those hours are over
 LIBRARY_COMPUTERS = (17533, 21134)  # VAULT13 e2, LIBCOMP.INT: Science on one rolls IN (1d10 <= 10): 350 XP, 6 h
 
 BOOKSHELF_SHADYW, BOOKCASE_SHADYE = 15931, 13097  # unscripted containers, a Scout Handbook each (SHADYE: and a Rope)
@@ -244,7 +245,26 @@ def razlo_gift(actor: Actor) -> bool:
 
 
 def into_the_vault(actor: Actor) -> bool:
-    """The town map's fourth entrance: VAULT13's third floor (the Overseer, the library), known from day 1."""
+    """The town map's fourth entrance: VAULT13's third floor (the Overseer, the library), known from day 1.
+
+    During the water line's hours (RATIONS, WTRGRD.INT) the queue fills the corridor to the library, and the vault
+    refuses a rest on day 1 ("no Pip-Boy"): the hours are spent on the world map instead, a walk east that stops at
+    09:00, and back (f1.travel.leg: 25 px from the vault is 0.6 game day, expected encounters 0.0 on that leg). A
+    target a few pixels away was no walk (0.0 hours, live, three times): the click fell on the vault's own circle and
+    opened its town map."""
+    if RATIONS[0] <= hour(actor) < RATIONS[1]:
+        if actor.snap().screen == "map":
+            quests.leave_map(actor)
+        vx, vy = actor.mem.glob("world_xpos"), actor.mem.glob("world_ypos")
+        t0, out = actor.snap().game_time, "no walk"
+        if worldmap.town_map_buttons(actor.mem):
+            worldmap.to_world_map(actor.mem)
+        if actor.snap().screen == "worldmap":
+            worldmap.aim(actor.mem, vx + WAIT_STEP_PX, vy)  # a walk away, stopped once the hours are over
+            done = lambda: hour(actor) >= RATIONS[1] or actor.snap().screen != "worldmap"
+            out = "over" if win32.wait_for(done, 120, 0.25) else "timeout"
+        actor.log.emit("waited", why="the water line", hours=round((actor.snap().game_time - t0) / 36000, 2),
+                       hour=round(hour(actor), 2), screen=actor.snap().screen, out=out)  # fmt: skip
     return travel(actor, "vault 13", 3).startswith("VAULT13") and actor.snap().elevation == 2
 
 
