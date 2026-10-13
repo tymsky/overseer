@@ -227,7 +227,9 @@ def the_rest_of_the_caves(actor: Actor) -> bool:
 
 def scorpion_tail(actor: Actor) -> bool:
     """A Scorpion Tail from a radscorpion's body (each of the nine carries one), for Razlo's antidote. A fight a foe
-    began after the hunt (on the sweep for the floor's loot) and the gate refused was fled out: back in first."""
+    began after the hunt (on the sweep for the floor's loot) and the gate refused was fled out: back in first. When
+    the way to a body still meets a fight the gate refuses (an ironman run fled twice), the tail, Razlo's antidote and
+    Jarvis wait for the second visit (antidote_later)."""
     if not actor._count(PID_SCORPION_TAIL):
         if not on_map(actor, "CAVES"):
             into_the_caves(actor)
@@ -239,6 +241,10 @@ def razlo_antidote(actor: Actor) -> bool:
     """Razlo makes an Antidote from the tail by day (06:00-19:00; the night talk has no such line): 4 hours, 250 XP."""
     if actor._count(PID_ANTIDOTE):
         return True
+    if not actor._count(PID_SCORPION_TAIL):  # no tail from the first visit: after the second
+        actor.antidote_later = True
+        actor.log.emit("antidote_later")
+        return True
     by_day(actor)
     actor.holster(True)
     quests.talk(actor, "razlo", RAZLO_ANTIDOTE)
@@ -249,7 +255,7 @@ def jarvis(actor: Actor) -> bool:
     """The Antidote used on Jarvis, lying ill: 400 XP and karma +1 (JARVIS.INT use_obj_on_p_proc)."""
     k0, count0 = karma(actor), actor._count(PID_ANTIDOTE)
     if not count0:
-        return False
+        return actor.antidote_later
     target = quests.find_critter(actor, "jarvis", JARVIS_BED)
     if target is None:
         return False
@@ -259,6 +265,27 @@ def jarvis(actor: Actor) -> bool:
     done = lambda: actor._count(PID_ANTIDOTE) < count0
     actor.use_item_on(PID_ANTIDOTE, target.tile, done, targets=frozenset({target.address}))
     return karma(actor) > k0
+
+
+def tail_on_the_second_visit(actor: Actor) -> bool:
+    if not actor.antidote_later or actor._count(PID_SCORPION_TAIL) or not on_map(actor, "CAVES"):
+        return True
+    quests.loot_the_dead(actor, ("Radscorpion",), max_bodies=1)
+    return actor._count(PID_SCORPION_TAIL) > 0
+
+
+def antidote_later(actor: Actor) -> bool:
+    """The first visit left no tail: Razlo's antidote and Jarvis now, with the tail from the second."""
+    if not actor.antidote_later or not (actor._count(PID_SCORPION_TAIL) or actor._count(PID_ANTIDOTE)):
+        return True
+    if not on_map(actor, "SHADYW") and not travel(actor, "shady sands", 0).startswith("SHADY"):
+        return False
+    if not on_map(actor, "SHADYW"):
+        quests.take_exit(actor, "SHADYW")
+    ok = razlo_antidote(actor) and actor._count(PID_ANTIDOTE) > 0 and jarvis(actor)
+    if ok:
+        actor.antidote_later = False
+    return ok
 
 
 def curtis(actor: Actor) -> bool:
@@ -442,7 +469,7 @@ IDEALIST_START = [
     Step("Seth: to the caves", seth_to_the_caves, checkpoint=True),
     Step("the caves' floor: rounds and a stimpak", the_floor),
     Step("the radscorpions", thin_the_caves, checkpoint=True, tries=6),
-    Step("a Scorpion Tail", scorpion_tail),
+    Step("a Scorpion Tail", scorpion_tail, optional=True, tries=2),
     Step("out of the caves", lambda a: quests.leave_map(a)),
     Step("back to Shady Sands", lambda a: travel(a, "shady sands", 0).startswith("SHADY"), checkpoint=True, tries=6),
     Step("Aradesh: the nest destroyed", nest_if_cleared),
@@ -465,7 +492,9 @@ IDEALIST_START = [
     # after Tandi is home: while she is gone Seth talks only of her (SETH.INT TanSeth), no trip to the caves
     Step("Seth: back to the caves (the dynamite)", back_to_the_caves, checkpoint=True),
     Step("the radscorpions left", the_rest_of_the_caves, checkpoint=True, tries=3, optional=True),
+    Step("a Scorpion Tail, if the first visit left none", tail_on_the_second_visit, optional=True, tries=2),
     # a Traps roll arms it: its outcome stands (no reloading for luck)
     Step("the cave wall blown", the_cave_wall, checkpoint=True, tries=1, optional=True),
     Step("out of the caves again", lambda a: not on_map(a, "CAVES") or quests.leave_map(a)),
+    Step("Razlo's antidote and Jarvis, if they waited", antidote_later, checkpoint=True, optional=True, tries=2),
 ]
