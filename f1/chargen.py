@@ -187,8 +187,11 @@ AGENT_PERKS = ("Bonus Rate of Fire", "Bonus Ranged Damage", "Earlier Sequence", 
 # Speech to 110 right after Outdoorsman, so that the one-roll Speech checks (Garl +10, the hostage-taker +20,
 # Sherry and the Master at 0) cannot fail when they come: 99 at level 3, 111 at level 4 (plan_points, Easy). Energy
 # Weapons waits a level; no energy weapon comes before the Boneyard anyway.
+# On Hard (-10 to every non-combat skill, and the plan aims at the values the game shows) that order left Speech at
+# 41 at level 3, under the 45 Garl's line needs (an audit of the plan with plan_points): Speech to 90 comes before
+# Outdoorsman, so that line shows and its roll (+10) cannot fail at Garl.
 IDEALIST_SKILLS = (
-    ("small guns", 55), ("outdoorsman", 100), ("speech", 110), ("lockpick", 45), ("energy weapons", 90),
+    ("small guns", 55), ("speech", 90), ("outdoorsman", 100), ("speech", 110), ("lockpick", 45), ("energy weapons", 90),
     ("speech", 120),  # Harry's ghoul line, HARRY.MSG 103 (-20), sure at 121, from the next level-up (Harry on the way out)
     ("science", 75), ("repair", 75), ("energy weapons", 130), ("science", 110), ("repair", 105),
     ("lockpick", 90), ("traps", 60), ("first aid", 70),
