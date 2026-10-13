@@ -42,15 +42,14 @@ def from_merchant(
     pay_with: tuple[int, ...] = (),
 ) -> Callable[[Actor], bool]:
     def buy(actor: Actor) -> bool:
-        from f1 import barter
+        from f1 import trade
 
         if actor._count(pid) >= quantity:
             return True
         if not hub_map(actor, where):
             return False
         actor.holster(True)
-        goods = tuple(g for g in pay_with if actor._count(g))
-        out = barter.buy(actor, merchant, plan or [], pid, quantity - actor._count(pid), pay_with=goods)
+        out = trade.visit(actor, merchant, plan, extra=(trade.Want((pid,), quantity),))
         actor.log.emit("shopping", item=knowledge.proto_name(pid), **out)
         settle(actor)
         return actor._count(pid) >= quantity

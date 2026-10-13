@@ -261,13 +261,10 @@ def gabriel(plan: list[str], done) -> Callable[[Actor], bool]:
 
 def zack_cells(want: int) -> Callable[[Actor], bool]:
     def buy(actor: Actor) -> bool:
-        from f1 import barter
+        from f1 import trade
 
-        if actor._count(PID_MFC) >= want:
-            return True
-        hands_empty(actor)
-        goods = tuple(p for p in (PID_LASER_PISTOL,) if actor._count(p))
-        out = barter.buy(actor, "zack", ZACK_TRADE, PID_MFC, want - actor._count(PID_MFC), pay_with=goods)
+        hands_empty(actor)  # a trade stop every visit: cells, stimpaks, and the spare goods sold
+        out = trade.visit(actor, "zack", ZACK_TRADE, extra=(trade.Want((PID_MFC,), want),))
         actor.log.emit("shopping", item="Micro Fusion Cell", **out)
         settle(actor)
         return actor._count(PID_MFC) >= want

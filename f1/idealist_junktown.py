@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import dialogue, geometry, nav, quests, win32
+from f1 import dialogue, geometry, nav, quests, trade, win32
 from f1.actions import Actor
 from f1.agent_junktown import (
     armor_and_gun,
@@ -360,6 +360,7 @@ IDEALIST_JUNKTOWN = [
     # not the Hunting Rifle off Killian's shelves: his store's shelves are his stock; a use of them opens his barter as
     # for a theft, and he and the gate guards attack (twice: HP 42 to 3)
     Step("leather armor on, the gun in hand", armor_and_gun, checkpoint=True),
+    Step("Killian: trade", trade.stop("Killian Darkwater", ["#104/118"]), checkpoint=True, optional=True),
     Step("the raid on Gizmo", the_raid, checkpoint=True, tries=4),
     Step("the gang's things", gang_loot, checkpoint=True),
     Step("Trish at the bar", trish, checkpoint=True),

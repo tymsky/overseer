@@ -2,12 +2,8 @@
 
 import time
 
-from f1 import dialogue, geometry, knowledge, loot, nav, quests, session, state, win32, world
+from f1 import dialogue, geometry, knowledge, loot, nav, quests, session, state, trade, win32, world
 from f1.actions import Actor
-from f1.agent_hub import (
-    ammo_from_rutger,
-    stimpaks_from_kane,
-)
 from f1.agent_military import (
     pick_lock,
 )
@@ -445,8 +441,8 @@ IDEALIST_HUB = [
     Step("Fry: the Hub", fry, checkpoint=True),
     Step("downtown", lambda a: hub_map(a, "HUBDWNTN"), checkpoint=True),
     Step("Stapleton's disk", stapletons_disk, checkpoint=True),
-    Step("10mm from Rutger", ammo_from_rutger, checkpoint=True),
-    Step("stimpaks from Kane", stimpaks_from_kane, checkpoint=True),
+    Step("Rutger: trade", trade.stop("Rutger"), checkpoint=True, optional=True),
+    Step("Kane: trade", trade.stop("Kane"), checkpoint=True, optional=True),
     Step("Old Town", lambda a: hub_map(a, "HUBOLDTN"), checkpoint=True),
     Step("the Junk for the pump", take_from(OLDTOWN_JUNK), checkpoint=True),
     Step("into the Thieves' Circle", into_the_circle, checkpoint=True),

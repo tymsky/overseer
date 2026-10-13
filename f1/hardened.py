@@ -16,11 +16,12 @@ The chain (static analysis; QUESTS.md, the Boneyard page, "Power Armor"):
 The Hub's maps are invaded from day 140 (HUB_INVADED) and LAADYTUM never is; no other limit here.
 """
 
-from f1 import quests
+from f1 import quests, trade
 from f1.actions import Actor
 from f1.boneyard import talk, to_map
 from f1.idealist_hub import hub_map
 from f1.idealist_support import PID_HARDENED_POWER_ARMOR, PID_POWER_ARMOR, day, rearm
+from f1.idealist_trading import MITCH
 from f1.route_support import Step, in_town, on_map, settle, travel
 
 PID_CAPS, PID_JOURNALS = 0x29, 237
@@ -90,6 +91,7 @@ IDEALIST_HARDENED = [
     Step("to the Hub", to_the_hub, checkpoint=True, tries=6),
     Step("downtown", lambda a: journals_carried(a) or hub_map(a, "HUBDWNTN"), checkpoint=True),
     Step("Stapleton: the journals", stapleton_journals, checkpoint=True),
+    Step("Mitch: trade", trade.stop(MITCH), checkpoint=True, optional=True),
     Step("to Adytum", to_adytum, checkpoint=True, tries=6),
     Step("Miles: the Hardened Power Armor", miles_hardens, checkpoint=True),
 ]
