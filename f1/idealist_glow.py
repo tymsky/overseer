@@ -55,9 +55,11 @@ IDEALIST_BROTHERHOOD = [
     Step("a rope from Mitch", from_mitch(PID_ROPE), checkpoint=True),
     Step("a Tool from Mitch", from_mitch(PID_TOOL), checkpoint=True, optional=True),
     Step("Old Town", lambda a: hub_map(a, "HUBOLDTN"), checkpoint=True),
+    # the Glow's Rad-X step takes two; Vance sold three for 1364 of 1697 caps (an ironman run: the fourth unaffordable,
+    # the step failed twice and the run stood), so two are enough and the rest spares
     Step(
         "Rad-X from Vance",
-        from_merchant("vance", "HUBOLDTN", PID_RAD_X, 4, VANCE_SELL, pay_with=(PID_10MM_SMG,)),
+        from_merchant("vance", "HUBOLDTN", PID_RAD_X, 4, VANCE_SELL, pay_with=(PID_10MM_SMG,), enough=2),
         checkpoint=True,
         tries=3,
     ),

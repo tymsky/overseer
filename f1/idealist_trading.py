@@ -40,7 +40,11 @@ def from_merchant(
     quantity: int = 1,
     plan: list[str] | None = None,
     pay_with: tuple[int, ...] = (),
+    enough: int | None = None,
 ) -> Callable[[Actor], bool]:
+    """Buy up to QUANTITY of PID; the step passes with ENOUGH (QUANTITY by default) in the pack."""
+    need = quantity if enough is None else enough
+
     def buy(actor: Actor) -> bool:
         from f1 import trade
 
@@ -52,7 +56,7 @@ def from_merchant(
         out = trade.visit(actor, merchant, plan, extra=(trade.Want((pid,), quantity),))
         actor.log.emit("shopping", item=knowledge.proto_name(pid), **out)
         settle(actor)
-        return actor._count(pid) >= quantity
+        return actor._count(pid) >= need
 
     return buy
 
