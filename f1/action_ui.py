@@ -33,7 +33,7 @@ MESSAGE_BOX = (0x14, 302, 127)  # the engine's dialog_out box: (flags, width, he
 class ScreenActions:
     """Screen actions using the Actor input, snapshots and outcome events."""
 
-    def rest(self, how: str = "until morning", timeout_s: float = 90) -> Outcome:
+    def rest(self, how: str = "until morning", timeout_s: float = 45) -> Outcome:
         """Pass time with the Pip-Boy's alarm clock (pipboy.c): P, the clock button (code 504), then the rest line
         (codes from 510: 510 + the duration's index), wait until the game time stops moving, close. Where the game
         allows no rest (near enemies: V13ENT's cave, a worker and the instance alike) the clock's button answers with
@@ -71,6 +71,10 @@ class ScreenActions:
         with clock.fast(self.pid):
             while time.monotonic() < end and still < 4:  # the clock runs; done when the game time holds for ~1 s
                 time.sleep(0.25)
+                if self.snap().screen != "pipboy":
+                    # the rest broke off (poisoned in the caves: the Pip-Boy closed by itself) and the map's own clock
+                    # runs on: waiting for it to hold took the whole timeout, past the watchdog's 60 s (an ironman run)
+                    break
                 now = self.snap().game_time
                 still = still + 1 if now == last else 0
                 last = now
