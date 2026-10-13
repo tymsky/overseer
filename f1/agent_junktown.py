@@ -2,7 +2,7 @@
 
 import time
 
-from f1 import clock, geometry, nav, quests, session, watchdog, win32
+from f1 import clock, nav, quests, watchdog, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.route_support import (
     TOWN_GREETINGS,
@@ -66,30 +66,20 @@ def into_killians_store(actor: Actor) -> bool:
     return on_map(actor, "JUNKKILL")
 
 
-def kenji_near(actor: Actor) -> bool:
-    """Kenji in, on his way from the door (hex 28283, 12 hexes from the talk's place) to Killian, close enough for
-    good shots: he stops to shoot within 3 hexes of 26281 (26682, 5 hexes from the player). Begun at 10 hexes (his
-    first step in, 27883), three ironman games: in combat he stayed there and shot from range; one of them missed
-    three times and fell from HP 38 to 6."""
-    k = quests.find_critter(actor, "Kenji")
-    return k is not None and geometry.distance(k.tile, actor.snap().dude.tile) <= 7
-
-
 def kenji(actor: Actor) -> bool:
     """By day (the store is locked at night, and Killian sleeps: by_day), Killian's first talk; Gizmo's assassin Kenji
     comes in shooting after it: the gun out, a fight against him alone. Done once Kenji came and is gone. At 6 in the
     morning the talk failed (Killian asleep), Kenji never came, and "no Kenji here" passed the step (a full run at
     Full HD): without the fight Killian never thanks the Agent and offers the job (KILLIAN.INT Killian47).
     Killian47 needs Kenji hurt by the player himself: KENJI.INT damage_p_proc sets map_var(2) only when the source is
-    the player, and Killian47 is said only with it set. Kenji is placed at hex 28283 after the talk and attacks once
-    within 3 hexes of 26281; a fight he begins can end before the player's first turn (an ironman run with Ian: a
-    critical hit for 56 killed him first, and the job was never offered). So the combat is begun as he comes near: the
-    player's turn comes first."""
+    the player, and Killian47 is said only with it set. Kenji begins the fight shooting at Killian (attack(Killian_ptr));
+    once a fight Kenji began ended before the player's first turn (an ironman run with Ian: a critical for 56 killed
+    him) and the job was never offered. Begun by the player instead (at 10, then 7 hexes), Kenji shot at the player:
+    two of six ironman games fell from HP 38 to 6-7 and stopped with Kenji alive, where 16 fights he began had ended
+    at HP 25 or more. So he begins it."""
     by_day(actor)
     quests.talk(actor, "Killian Darkwater", ["#107/121"])
     actor.holster(False)
-    if win32.wait_for(lambda: actor.in_combat() or kenji_near(actor), 15, 0.1) and not actor.in_combat():
-        session.press("a")  # the first turn is ours
     fought = win32.wait_for(actor.in_combat, 45, 0.25)
     if fought:
         actor.fight(only=("Kenji",))
