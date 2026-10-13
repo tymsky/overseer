@@ -59,10 +59,18 @@ def to_vault_15(actor: Actor) -> bool:
 
 
 def down_the_ladder(actor: Actor) -> bool:
-    """Down into the vault; after a refused fight fled out to the world map, the entrance first again."""
+    """Down into the vault; after a refused fight fled out to the world map, the entrance first again. The radscorpion
+    by the shack (every ironman run met it on the way to the ladder, at level 2: death 0.15-0.69 when it struck first,
+    refused in 5 of 6) is shot first from range where the gate allows it (quests.hunt: from 9 hexes, a flare where
+    the dark costs the shot), before the walk wakes it."""
     if actor.snap().screen == "worldmap":
         worldmap.enter_here(actor.pid, 0)
         win32.wait_for(lambda: actor.snap().screen == "map", 30, 0.5)
+    if on_map(actor, "VAULTENT") and quests.foes_of(actor, "Radscorpion"):
+        r = quests.hunt(actor, "Radscorpion", minutes=5)
+        actor.log.emit("v15", why="the entrance's radscorpion first", hunt=r["why"])
+        if r["why"] == "died":
+            return False
     return on_map(actor, "VAULTBUR") or quests.use_scenery(
         actor, ("bv2vault", "Ladder"), lambda: on_map(actor, "VAULTBUR"), "the ladder down"
     )
