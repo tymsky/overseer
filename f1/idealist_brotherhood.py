@@ -18,6 +18,7 @@ from f1.idealist_necropolis import (
 )
 from f1.idealist_support import (
     PID_BOS_ARMOR,
+    PID_HARDENED_POWER_ARMOR,
     PID_MOTIVATOR,
     PID_POWER_ARMOR,
     beside,
@@ -305,7 +306,9 @@ def set_aside(actor: Actor, need: int) -> list[int]:
     items = [
         (loot.item_weight(actor.mem, item, pid), pid)
         for item, pid, qty in actor.items()
-        if qty == 1 and not actor.mem.u32(item + Obj.FLAGS) & ITEM_EQUIPPED and pid != PID_POWER_ARMOR
+        if qty == 1
+        and not actor.mem.u32(item + Obj.FLAGS) & ITEM_EQUIPPED
+        and pid not in (PID_POWER_ARMOR, PID_HARDENED_POWER_ARMOR)
     ]
     aside = []
     for w, pid in sorted(items, reverse=True):

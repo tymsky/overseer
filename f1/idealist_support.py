@@ -98,6 +98,7 @@ def rest_until(actor: Actor, start: float, end: float) -> bool:
 PID_COMBAT_ARMOR = 17
 
 PID_BOS_ARMOR, PID_POWER_ARMOR, PID_MOTIVATOR = 239, 3, 229
+PID_HARDENED_POWER_ARMOR = 232  # Miles's work on pid 3 (MILES.INT Miles28; f1.hardened)
 
 
 def hands_empty(actor: Actor) -> bool:
@@ -113,8 +114,8 @@ def hands_empty(actor: Actor) -> bool:
 
 
 def rearm(actor: Actor) -> bool:
-    """The best armour carried worn (Power, Brotherhood, Combat), the best weapon ready, holstered."""
-    for pid in (PID_POWER_ARMOR, PID_BOS_ARMOR, PID_COMBAT_ARMOR):
+    """The best armour carried worn (Hardened Power, Power, Brotherhood, Combat), the best weapon ready, holstered."""
+    for pid in (PID_HARDENED_POWER_ARMOR, PID_POWER_ARMOR, PID_BOS_ARMOR, PID_COMBAT_ARMOR):
         if actor._count(pid):
             actor.equip(pid, "armor")
             break

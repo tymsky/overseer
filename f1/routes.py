@@ -450,9 +450,9 @@ ROUTES = {
 
 def all_routes() -> dict[str, list[Step]]:
     """The Agent's routes and the Idealist's (f1/idealist.py, which builds on this module's steps)."""
-    from f1 import boneyard, cathedral, idealist, military, raiders, watershed
+    from f1 import boneyard, cathedral, hardened, idealist, military, raiders, watershed
 
-    late = boneyard.ROUTES | military.ROUTES | raiders.ROUTES | watershed.ROUTES | cathedral.ROUTES
+    late = boneyard.ROUTES | military.ROUTES | raiders.ROUTES | watershed.ROUTES | hardened.ROUTES | cathedral.ROUTES
     return ROUTES | idealist.ROUTES | late
 
 

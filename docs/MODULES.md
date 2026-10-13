@@ -35,6 +35,7 @@ defines the method; re-exporting the method does not change where its global nam
 | `idealist_support` | Shared operations for the Idealist routes |
 | `idealist_*` | Regional tasks and ordered step lists for the Idealist routes |
 | `boneyard`, `cathedral`, `military`, `raiders`, `watershed` | Existing late-game regional routes |
+| `hardened` | The Hardened Power Armor: the Hub's journals, then Miles in Adytum (before the Cathedral) |
 | `routes`, `idealist` | Compatibility exports and route registries; `routes` also keeps its command |
 
 A regional module imports reusable operations from their owning module, rather than importing the registry

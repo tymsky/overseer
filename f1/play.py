@@ -38,6 +38,7 @@ CHAINS = {
         "idealist_military",
         "idealist_raiders",
         "idealist_watershed",
+        "idealist_hardened",
         "idealist_cathedral",
     ),
     "agent": ("start", "water_chip", "junktown", "tandi"),

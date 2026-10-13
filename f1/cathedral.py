@@ -26,10 +26,9 @@ from f1.agent_cathedral import (
     stairs,
     the_ending,
 )
-from f1.idealist_support import experience, hands_empty, karma
+from f1.idealist_support import PID_HARDENED_POWER_ARMOR, PID_POWER_ARMOR, experience, hands_empty, karma
 from f1.route_support import Step, on_map, travel, wearing
 
-PID_POWER_ARMOR = 3
 SHELF_STIMPAKS = 6  # below this many the top floor's shelves are looted (2 stimpaks and a first aid kit there)
 LAIR_HEAL_AT = 60
 
@@ -42,8 +41,9 @@ def out_of_necropolis(actor: Actor) -> bool:
 def to_the_cathedral(actor: Actor) -> bool:
     if on_map(actor, "CHILDRN"):
         return True
-    if actor.snap().screen == "map" and not wearing(actor, PID_POWER_ARMOR) and actor._count(PID_POWER_ARMOR):
-        actor.equip(PID_POWER_ARMOR, "armor")
+    armour = next((p for p in (PID_HARDENED_POWER_ARMOR, PID_POWER_ARMOR) if actor._count(p)), None)
+    if actor.snap().screen == "map" and armour is not None and not wearing(actor, armour):
+        actor.equip(armour, "armor")
     return travel(actor, "cathedral", 0).startswith("CHILDRN")
 
 
