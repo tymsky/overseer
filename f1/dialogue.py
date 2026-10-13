@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from f1 import engine_map as em
 from f1 import knowledge, session, state
 from f1.engine_map import Obj
-from f1.memory import GameMemory
+from f1.memory import GameMemory, ReadError
 
 REPLY_LIST, REPLY_TEXT = 0x04, 0x10
 OPTIONS = 0xA9C
@@ -75,10 +75,12 @@ def _text(raw: bytes) -> str:
 
 def program_name(mem: GameMemory, program: int) -> str:
     """The script a program runs, from its name field (a path to the .int), without folder and extension."""
-    name_at = mem.u32(program) if program else 0
-    if not name_at:
+    try:
+        name_at = mem.u32(program) if program else 0
+        # a program being set up or freed: its name field held 0xBEEFCAFE as Zax's talk opened (a full run)
+        name = _text(mem.read(name_at, 64)).replace("/", "\\") if name_at else ""
+    except ReadError:
         return ""
-    name = _text(mem.read(name_at, 64)).replace("/", "\\")
     return name.rsplit("\\", 1)[-1].rsplit(".", 1)[0].lower()
 
 
