@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from f1 import chargen, clock, dialogue, flows, knowledge, loot, risk, session, state, watchdog
+from f1 import barter, chargen, clock, dialogue, flows, knowledge, loot, risk, session, state, watchdog, win32
 from f1.actions import Actor
 from f1.engine_map import Obj
 from f1.memory import ReadError
@@ -126,6 +126,14 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.S
         from f1 import quests
 
         log.emit("talk_left_open", step=step.name, closed=quests.close_dialogue(actor))
+    if not ok and getattr(actor, "mem", None) is not None and barter.screen_open(actor.mem):
+        # a talk that ended in a barter screen (Razlo by night: his healing unpaid) kept the Pip-Boy from opening
+        # for the retry's rest: back to the talk (T), then out of it
+        from f1 import quests
+
+        session.press("t")
+        win32.wait_for(lambda: not barter.screen_open(actor.mem), 3, 0.1)
+        log.emit("barter_left_open", step=step.name, closed=quests.close_dialogue(actor))
     s = actor.snap()
     died = not (ok and step.final) and (s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or death_screen(s))
     rads = actor.mem.i32(s.dude.address + Obj.CRITTER_RADIATION) if s.dude and hasattr(actor, "mem") else None

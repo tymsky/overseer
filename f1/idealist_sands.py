@@ -9,6 +9,7 @@ from f1.agent_junktown import (
 )
 from f1.agent_sands import (
     GVAR_NUM_RADSCORPIONS,
+    GVAR_RADSCORPION_SEED,
     SETH_POST,
     into_the_caves,
     nest_reported,
@@ -249,7 +250,8 @@ def razlo_antidote(actor: Actor) -> bool:
         actor.antidote_later = True
         actor.log.emit("antidote_later")
         return True
-    by_day(actor)
+    if not by_day(actor) or not 6 <= hour(actor) < 19:
+        return False  # by night he offers only his paid healing, which ended in his barter screen
     actor.holster(True)
     quests.talk(actor, "razlo", RAZLO_ANTIDOTE)
     return actor._count(PID_ANTIDOTE) > 0
@@ -340,6 +342,40 @@ def into_the_vault(actor: Actor) -> bool:
         actor.log.emit("waited", why="the water line", hours=round((actor.snap().game_time - t0) / 36000, 2),
                        hour=round(hour(actor), 2), screen=actor.snap().screen, out=out)  # fmt: skip
     return travel(actor, "vault 13", 3).startswith("VAULT13") and actor.snap().elevation == 2
+
+
+def tandi_due(actor: Actor) -> bool:
+    """SHADYWST.INT takes Tandi only once RADSCORPION_SEED is 2: every radscorpion dead (SSRADSCO destroy_p_proc) or
+    the cave wall blown (CAVEWALL). With some left after the first visit (the gate's bound) the raiders wait: her
+    steps come after the caves' second visit (an ironman run rested 66 h and she was still home)."""
+    if quests.gvar(actor, GVAR_RADSCORPION_SEED) == 2:
+        return True
+    actor.tandi_later = True
+    actor.log.emit("tandi_later", radscorpions=quests.gvar(actor, GVAR_NUM_RADSCORPIONS))
+    return False
+
+
+def now_or_later(fn):
+    """A step of Tandi's on the first pass: skipped once tandi_due put her off."""
+    return lambda actor: actor.tandi_later or fn(actor)
+
+
+def after_the_caves(fn, last: bool = False):
+    """A step of Tandi's after the caves' second visit, only where the first pass put her off; still no seed of 2
+    (fights refused, no dynamite) and she stays home: logged, nothing to do."""
+
+    def step(actor: Actor) -> bool:
+        if not actor.tandi_later:
+            return True
+        if quests.gvar(actor, GVAR_RADSCORPION_SEED) != 2:
+            actor.log.emit("tandi_never", radscorpions=quests.gvar(actor, GVAR_NUM_RADSCORPIONS))
+            return True
+        ok = fn(actor)
+        if ok and last:
+            actor.tandi_later = False
+        return ok
+
+    return step
 
 
 def tandi_home(actor: Actor) -> bool:
@@ -457,6 +493,18 @@ def the_cave_wall(actor: Actor) -> bool:
     return down and karma(actor) >= k0 + 3
 
 
+# Tandi: taken by the raiders on an entry to West two days after it was left (SHADYWST.INT), talked free, home
+TANDI = [
+    Step("two days away", two_days_away, checkpoint=True),
+    Step("back west: Tandi taken", tandi_taken, checkpoint=True),
+    Step("Aradesh: Tandi is missing", tandi_quest),
+    Step("Razlo's gift", razlo_gift, checkpoint=True),
+    Step("to the Khans", lambda a: travel(a, "raiders", 0).startswith("RAIDERS"), checkpoint=True, tries=6),
+    Step("Garl lets her go", garl, checkpoint=True, tries=5),
+    Step("Tandi home", tandi_home, checkpoint=True, tries=6),
+    Step("Aradesh: the reward", tandi_reward, checkpoint=True),
+]
+
 IDEALIST_START = [
     Step("a weapon in hand", lambda a: a.ready_weapon().ok),
     Step("day 1: the vault opens", day_one),
@@ -486,14 +534,8 @@ IDEALIST_START = [
     Step("a Scout Handbook (East)", lambda a: book_from(a, BOOKCASE_SHADYE)),
     # the days away that SHADYWST.INT wants before it takes Tandi are rested out: Vault 15 waits until after Junktown
     # (at level 2 its radscorpions came over the risk bound in the burrows, where no exit grid offers a way out)
-    Step("two days away", two_days_away, checkpoint=True),
-    Step("back west: Tandi taken", tandi_taken, checkpoint=True),
-    Step("Aradesh: Tandi is missing", tandi_quest),
-    Step("Razlo's gift", razlo_gift, checkpoint=True),
-    Step("to the Khans", lambda a: travel(a, "raiders", 0).startswith("RAIDERS"), checkpoint=True, tries=6),
-    Step("Garl lets her go", garl, checkpoint=True, tries=5),
-    Step("Tandi home", tandi_home, checkpoint=True, tries=6),
-    Step("Aradesh: the reward", tandi_reward, checkpoint=True),
+    Step("the raiders' cue: the radscorpions done", lambda a: tandi_due(a) or True),
+    *[Step(s.name, now_or_later(s.run), checkpoint=s.checkpoint, tries=s.tries) for s in TANDI],
 ]
 
 IDEALIST_VAULT15 = [
@@ -507,4 +549,19 @@ IDEALIST_VAULT15 = [
     Step("the cave wall blown", the_cave_wall, checkpoint=True, tries=1, optional=True),
     Step("out of the caves again", lambda a: not on_map(a, "CAVES") or quests.leave_map(a)),
     Step("Razlo's antidote and Jarvis, if they waited", antidote_later, checkpoint=True, optional=True, tries=2),
+    Step(
+        "to Shady Sands East, if Tandi waited",
+        after_the_caves(lambda a: travel(a, "shady sands", 1).startswith("SHADYE")),
+        checkpoint=True,
+        tries=6,
+    ),
+    *[
+        Step(
+            f"{s.name} (after the caves)",
+            after_the_caves(s.run, last=i == len(TANDI) - 1),
+            checkpoint=s.checkpoint,
+            tries=s.tries,
+        )
+        for i, s in enumerate(TANDI)
+    ],
 ]

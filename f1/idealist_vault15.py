@@ -47,14 +47,12 @@ V15_RUBBLE = ((23099, 6), (22701, 8))
 
 V15_LADDER_UP = 20519
 
-_left_shady: int | None = None  # the game time Shady Sands was left for Vault 15 (two_days_away)
+_left_shady: int | None = None  # the game time Shady Sands was left (unset since Vault 15 waits: rested out)
 
 
 def to_vault_15(actor: Actor) -> bool:
-    global _left_shady
     if on_map(actor, "VAULTENT") or on_map(actor, "VAULTBUR"):
         return True
-    _left_shady = actor.snap().game_time
     return travel(actor, "vault 15", 0).startswith("VAULT")
 
 

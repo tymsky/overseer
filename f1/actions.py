@@ -197,6 +197,7 @@ class Actor(MovementActions, InteractionActions, InventoryActions, CombatActions
     # called on the player's first turn of a fight a foe started, before the gate weighs it (a hunt lights a flare)
     forced_prep = None
     antidote_later = False  # Shady Sands: the first caves visit left no Scorpion Tail (idealist_sands)
+    tandi_later = False  # Shady Sands: radscorpions left after the first visit, the raiders wait (idealist_sands)
 
     def __init__(self, pid: int, log: EventLog) -> None:
         self.pid = pid

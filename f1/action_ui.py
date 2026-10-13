@@ -43,6 +43,9 @@ class ScreenActions:
         if self.in_combat():  # the Pip-Boy does not open in combat; its refusal box stayed up in the caves (16:3x)
             return self._end(False, "in combat", {}, "rest")
         session.press("p")
+        if not win32.wait_for(lambda: self.snap().screen == "pipboy", 4, 0.1) and self.snap().screen == "map":
+            # a press just after a map's entry went unheard (Shady Sands by night, the map up 0.7 s): once more
+            session.press("p")
         if not win32.wait_for(lambda: self.snap().screen == "pipboy", 4, 0.1):
             for _ in range(3):  # a box said why not (a message window over the map): it takes Enter
                 if self.snap().screen in ("map", "pipboy"):
