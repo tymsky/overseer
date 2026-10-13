@@ -72,6 +72,16 @@ Z = 1.96  # the Wilson interval's 95 %
 # The gate (Fallout 2's, ported): a fight is entered while the upper 95 % bound of its modelled chance
 # of the player's death is under this, and at most UNFINISHED_MAX of its trials run out of rounds
 RISK_MAX = 0.02
+IRONMAN_RISK_MAX = 0.20  # an ironman run (the owner): fights are prepared for, not avoided; a bound high
+# enough that Shady Sands' radscorpions (win 0.885, bound 0.167 on Hard/Rough) are fought, not a stuck run
+
+
+def set_bound(bound: float | None) -> None:
+    """The gate's bound on the death chance's upper 95 % bound; None: RISK_MAX's own 0.02."""
+    global RISK_MAX
+    RISK_MAX = 0.02 if bound is None else bound
+
+
 UNFINISHED_MAX = 0.05
 GAME_DAY = 864000  # ticks: criticals only from the second day (roll.c roll_check_critical)
 DIFFICULTY_HIT = {0: -20, 1: 0, 2: 20}
@@ -603,9 +613,10 @@ def _trial(m: _Model, rng: random.Random) -> tuple[str, int, int, int]:
 NORMAL = Rules()
 
 
-def fight(me: Fighter, foes: Sequence[Fighter], rules: Rules = NORMAL, seed: int = SEED, bound: float = RISK_MAX,
+def fight(me: Fighter, foes: Sequence[Fighter], rules: Rules = NORMAL, seed: int = SEED, bound: float | None = None,
           max_trials: int = MAX_TRIALS) -> Risk:  # fmt: skip
-    """The death risk of this fight, in batches of BATCH trials until the Wilson interval clears BOUND."""
+    """The death risk of this fight, in batches of BATCH trials until the Wilson interval clears BOUND (RISK_MAX)."""
+    bound = RISK_MAX if bound is None else bound
     m = _Model(me, foes, rules)
     rng = random.Random(seed)
     deaths = wins = capped = trials = 0

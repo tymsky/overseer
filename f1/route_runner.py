@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from f1 import chargen, clock, flows, knowledge, loot, session, state, watchdog
+from f1 import chargen, clock, flows, knowledge, loot, risk, session, state, watchdog
 from f1.actions import Actor
 from f1.engine_map import Obj
 from f1.memory import ReadError
@@ -335,6 +335,7 @@ def _drive(
     elif left := clock.reset(actor.pid):  # a killed test run left its speed in the game
         actor.log.emit("clock_reset", **left.__dict__)
     watchdog.set_cap(IRONMAN_STUCK_S if ironman else None)
+    risk.set_bound(risk.IRONMAN_RISK_MAX if ironman else None)
     dog = watchdog.Watchdog(actor.pid, actor.log)
     dog.start()
     try:

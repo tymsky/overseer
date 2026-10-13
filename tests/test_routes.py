@@ -405,3 +405,20 @@ def test_the_ironman_cap_bounds_every_screen() -> None:
         assert watchdog.limit_for("map") == watchdog.LIMITS["map"]
     finally:
         watchdog.set_cap(None)
+
+
+def test_an_ironman_run_raises_the_fight_gates_bound() -> None:
+    from f1 import risk
+
+    try:
+        risk.set_bound(risk.IRONMAN_RISK_MAX)
+        assert risk.acceptable(risk.Risk(**{**_risk_fields(), "high": 0.167}))
+        risk.set_bound(None)
+        assert not risk.acceptable(risk.Risk(**{**_risk_fields(), "high": 0.167}))
+    finally:
+        risk.set_bound(None)
+
+
+def _risk_fields() -> dict:
+    return {"deaths": 115, "trials": 1000, "low": 0.09, "high": 0.0, "capped": 0, "wins": 885, "hp_left": 25.2,
+            "turns": 8.1, "rounds": 7.6, "hit": 28, "foe_hit": 95}  # fmt: skip
