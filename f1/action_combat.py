@@ -45,6 +45,7 @@ GOOD_SHOT = 50  # percent: below it a gun closes in on a foe that has no gun (f1
 HOPELESS_SHOT = 20  # percent: below it, and no way closer this turn, the round is not spent
 LONG_SHOT = 5  # percent: after STALL_TURNS turns with nothing done a shot this poor is taken all the same
 STALL_TURNS = 2  # turns without a shot, a step or a heal before the fight takes long shots, then steps back
+PACK_HEXES = 8  # a foe without a gun with another foe this near it is waited for, not closed in on
 AIM_BLOCKED = ("COMBAT", 104)  # a shot whose line of fire is blocked (COMBAT.MSG)
 
 
@@ -355,8 +356,17 @@ class CombatActions:
                 target, gap = in_reach[0], gaps.get(in_reach[0].address, 99)
                 chance = chances[target.address]
                 if chance < GOOD_SHOT and gap > 1 and not odds.armed_at_range(self.mem, target):
-                    closer = min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
-                    self.log.emit("tactic", move="close in", chance=chance, gap=gap, hexes=closer)
+                    # it walks up by itself; a step towards it among others of its kind brings them in too (the
+                    # radscorpion caves, two ironman runs: the weighed one's shot was blocked, six hexes in towards
+                    # another, then two stung 14-29 a round and the player died)
+                    pack = sum(
+                        1 for e in foes if e is not target and geometry.distance(e.tile, target.tile) <= PACK_HEXES
+                    )
+                    closer = 0 if pack else min(gap - 1, -(-(GOOD_SHOT - chance) // 4), s.dude.ap - cost)
+                    self.log.emit(
+                        "tactic", move="wait for it" if pack else "close in", chance=chance, gap=gap, hexes=closer,
+                        pack=pack,
+                    )  # fmt: skip
                     if closer > 0:
                         moved = self.combat_move_towards(target.tile, closer)
                         if moved.ok:
