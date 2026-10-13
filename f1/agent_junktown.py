@@ -67,9 +67,12 @@ def into_killians_store(actor: Actor) -> bool:
 
 
 def kenji_near(actor: Actor) -> bool:
-    """Kenji in, on his way from the door (hex 28283, 12 hexes from the talk's place) to Killian."""
+    """Kenji in, on his way from the door (hex 28283, 12 hexes from the talk's place) to Killian, close enough for
+    good shots: he stops to shoot within 3 hexes of 26281 (26682, 5 hexes from the player). Begun at 10 hexes (his
+    first step in, 27883), three ironman games: in combat he stayed there and shot from range; one of them missed
+    three times and fell from HP 38 to 6."""
     k = quests.find_critter(actor, "Kenji")
-    return k is not None and geometry.distance(k.tile, actor.snap().dude.tile) <= 10
+    return k is not None and geometry.distance(k.tile, actor.snap().dude.tile) <= 7
 
 
 def kenji(actor: Actor) -> bool:
@@ -80,7 +83,7 @@ def kenji(actor: Actor) -> bool:
     Killian47 needs Kenji hurt by the player himself: KENJI.INT damage_p_proc sets map_var(2) only when the source is
     the player, and Killian47 is said only with it set. Kenji is placed at hex 28283 after the talk and attacks once
     within 3 hexes of 26281; a fight he begins can end before the player's first turn (an ironman run with Ian: a
-    critical hit for 56 killed him first, and the job was never offered). So the combat is begun on sight of him: the
+    critical hit for 56 killed him first, and the job was never offered). So the combat is begun as he comes near: the
     player's turn comes first."""
     by_day(actor)
     quests.talk(actor, "Killian Darkwater", ["#107/121"])
