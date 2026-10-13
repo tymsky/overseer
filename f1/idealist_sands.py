@@ -19,6 +19,7 @@ from f1.agent_sands import (
     tandi_quest,
     tandi_reward,
 )
+from f1.barter import PID_CAPS
 from f1.idealist_support import (
     DAY,
     beside,
@@ -86,6 +87,11 @@ CURTIS_ROTATION = ["#108", "#114", "#117"]
 RAZLO_ANTIDOTE = ["#146"]  # RAZLO.MSG 146, 06:00-19:00: 4 h, 250 XP
 
 RAZLO_GIFT = ["#105", "#110/194", "#114"]
+
+# IAN.INT: Ian02 "@104" (the name) -> Ian04 109 -> Ian06 149 -> Ian17 at reaction level 2 (50 + 5 CH - 25 + karma:
+# 40 at CH 3; level 3, over 75, joins free): 157 for 100 caps, else 159 -> Ian17a, a Speech roll at +20 whose
+# [More] joins him (join_party: IAN_STATUS 2, 100 XP). A later talk opens at Ian12, where 149 is offered again
+IAN_JOIN = ["#149", "#157", "#159", "@104", "#109"]  # 149 first: "@104" (i'm) also matches Ian06's 114
 
 # GARL.MSG 133 (IQ 5) reaches garl15 with no roll, then 141 (IQ 6, Speech >= 45): Speech +10 or a CH check
 GARL_TALKED_DOWN = ["#133", "#141"]
@@ -175,10 +181,11 @@ SHELF_WAIT_S = 20.0
 
 
 def someone_by(actor: Actor, tile: int, hexes: int = 2) -> bool:
-    """A living critter other than the player within `hexes` of `tile` on this floor."""
+    """A living critter other than the player and the party (Ian follows on the player's team) within `hexes` of
+    `tile` on this floor."""
     s = actor.snap()
     return any(
-        not c.dead and c.elevation == s.elevation and c.address != s.dude.address
+        not c.dead and c.elevation == s.elevation and c.address != s.dude.address and c.team != s.dude.team
         and geometry.distance(c.tile, tile) <= hexes
         for c in state.critters(actor.mem)
     )  # fmt: skip
@@ -211,6 +218,23 @@ def cook(actor: Actor) -> bool:
     praised = karma(actor) > k0 or any(dialogue.holds(chosen, "cook", 102) for _r, _o, chosen in steps)
     actor.log.emit("cook", praised=praised)
     return praised
+
+
+def ian(actor: Actor) -> bool:
+    """Ian into the party before the first caves visit (the owner's answer to a death at the radscorpions): a second
+    gun and a second target. At that point the Idealist has no caps (Killian's trade read 0 later still), so the
+    hire is the one Speech roll; its outcome stands (no second talk for another roll) and the route goes on alone."""
+    if quests.gvar(actor, "IAN_STATUS") == 2:
+        return True
+    caps = actor._count(PID_CAPS)
+    actor.holster(True)
+    steps = quests.talk(actor, "Ian", IAN_JOIN, strict=True) or []
+    if actor.snap().screen == "dialogue":
+        settle(actor)
+    joined = quests.gvar(actor, "IAN_STATUS") == 2
+    rolled = any(dialogue.holds(chosen, "ian", 159) for _r, _o, chosen in steps)
+    actor.log.emit("ian", joined=joined, caps=caps, rolled=rolled, steps=len(steps))
+    return joined
 
 
 SCORPIONS = 9  # in the caves at the start (each carries a Scorpion Tail)
@@ -548,6 +572,7 @@ IDEALIST_START = [
     Step("Katrina's questions", katrina),
     Step("Aradesh: the radscorpions", scorpion_quest, checkpoint=True),
     Step("the cook's compliment", cook, checkpoint=True, tries=1, optional=True),
+    Step("Ian joins", ian, checkpoint=True, tries=1, optional=True),
     Step("Seth: to the caves", seth_to_the_caves, checkpoint=True),
     Step("the caves' floor: rounds and a stimpak", the_floor),
     Step("the radscorpions", thin_the_caves, checkpoint=True, tries=6),
