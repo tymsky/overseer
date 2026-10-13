@@ -155,12 +155,33 @@ def theresa(actor: Actor) -> bool:
 def book_from(actor: Actor, tile: int) -> bool:
     """The Scout Handbook from the shelf on `tile` (and what else it holds: East's rope, for Vault 15), read at once.
     Fails when the shelf gave nothing (a talk left open had made its loot a shop's barter)."""
-    if actor._count(PID_SCOUT_HANDBOOK) == 0:
+    for _ in range(SHELF_TRIES):
+        if actor._count(PID_SCOUT_HANDBOOK):
+            break
         if dialogue.read(actor.mem).active:
             quests.close_dialogue(actor)
-        if not actor.loot(tile).ok and not actor._count(PID_SCOUT_HANDBOOK):
-            return False
-    return read_book(actor, PID_SCOUT_HANDBOOK)
+        if actor.loot(tile).ok:
+            return read_book(actor, PID_SCOUT_HANDBOOK)
+        # someone by the shelf took the click (Shady Sands East, an ironman run: no pixel of the bookcase hit, the
+        # clicks named a villager and his greeting opened, the step and its retry the same): he wanders, wait for it
+        if dialogue.read(actor.mem).active:
+            quests.close_dialogue(actor)
+        win32.wait_for(lambda: not someone_by(actor, tile), SHELF_WAIT_S, 0.5)
+    return bool(actor._count(PID_SCOUT_HANDBOOK)) and read_book(actor, PID_SCOUT_HANDBOOK)
+
+
+SHELF_TRIES = 4
+SHELF_WAIT_S = 20.0
+
+
+def someone_by(actor: Actor, tile: int, hexes: int = 2) -> bool:
+    """A living critter other than the player within `hexes` of `tile` on this floor."""
+    s = actor.snap()
+    return any(
+        not c.dead and c.elevation == s.elevation and c.address != s.dude.address
+        and geometry.distance(c.tile, tile) <= hexes
+        for c in state.critters(actor.mem)
+    )  # fmt: skip
 
 
 def daylight(actor: Actor) -> bool:
