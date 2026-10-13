@@ -69,7 +69,7 @@ BATCH = 200  # trials between two looks at the bound
 MAX_TRIALS = 3200
 MAX_ROUNDS = 60
 Z = 1.96  # the Wilson interval's 95 %
-# the owner's rule (Fallout 2's gate, ported): a fight is entered while the upper 95 % bound of its modelled chance
+# The gate (Fallout 2's, ported): a fight is entered while the upper 95 % bound of its modelled chance
 # of the player's death is under this, and at most UNFINISHED_MAX of its trials run out of rounds
 RISK_MAX = 0.02
 UNFINISHED_MAX = 0.05
