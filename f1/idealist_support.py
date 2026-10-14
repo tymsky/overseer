@@ -44,7 +44,9 @@ def take_from(tile: int) -> Callable[[Actor], bool]:
 
     def run(actor: Actor) -> bool:
         f = next((f for f in loot.finds(actor, town_containers=True) if f.tile == tile), None)
-        return f is None or loot.take(actor, f, loot.danger(actor)) == loot.TAKEN
+        got = "none there" if f is None else loot.take(actor, f, loot.danger(actor))
+        actor.log.emit("take_from", tile=tile, got=got)
+        return f is None or got == loot.TAKEN
 
     return run
 

@@ -154,7 +154,8 @@ def to_the_far_side(actor: Actor) -> bool:
 
 def the_pump(actor: Actor) -> bool:
     """The Junk used on the pump: Repair -5 (NH2OPUMP.INT). A plain failure keeps the parts (tried again: the game's
-    own retry, up to PUMP_TRIES: on Hard Repair is about 40 here); a critical failure destroys them (the spare then)."""
+    own retry, up to PUMP_TRIES: on Hard Repair is about 40 here); a critical failure destroys them (the spare then,
+    if spare_junk found it)."""
     if quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2:
         return True
     xp0 = experience(actor)
@@ -211,7 +212,9 @@ IDEALIST_NECROPOLIS = [
     *WATER_CHIP[4:6],  # the sewers to the Watershed, up to its south
     Step("the spare Junk", spare_junk, checkpoint=True, optional=True, tries=2),
     Step("past Harry, sneaking", to_the_far_side, checkpoint=True),
-    Step("the pump fixed", the_pump, checkpoint=True),
+    # its failure stands: a critical failure destroys the only Junk when the spare was not found (an ironman run: one
+    # plain failure, then the parts destroyed; the spare's step had found nothing at its tile, in every run so far)
+    Step("the pump fixed", the_pump, checkpoint=True, optional=True),
     Step("to the cell manhole", to_the_cell, checkpoint=True),
     *WATER_CHIP[7:15],  # down the manhole, Vault 12, the cab, the chip, back up to the cell
     Step("heal before the road", heal_up),
