@@ -1,10 +1,9 @@
 """Idealist route tasks for junktown."""
 
-import time
-
 from f1 import dialogue, geometry, nav, quests, trade, win32
 from f1.actions import Actor
 from f1.agent_junktown import (
+    PID_CAPS,
     armor_and_gun,
     by_day,
     gang_loot,
@@ -22,6 +21,7 @@ from f1.idealist_support import (
     rest_until,
     scripted,
 )
+from f1.objectives import ObjectiveOutcome
 from f1.route_support import (
     Step,
     hour,
@@ -125,15 +125,17 @@ ROOM_REST = ["#101"]  # CRASHRM: rest until 10:00; CrashRm02 then creates the ra
 
 MARCELLE_HELP = ["#104"]  # Marcelles00 sets SAVE_SINTHIA 1
 
-# JTRAIDER.MSG: phase 1 (he talks on sight): Raider0 105 -> Raider4 111 -> Raider5 114 -> Raider6 (after it, a player
-# within 4 hexes is attacked); phase 2, the next talk: Raider9 123 -> Raider14 132 -> a Speech +20 roll sets var6;
-# phase 3: Raider21 146 -> Raider22 149 -> Raider24 154, 100 caps -> safe(): map_var 4 (JUNKKILL's
-# map_update gives 1000 XP), SAVE_SINTHIA 2. var1, var2 and var6 are script variables: no load between the phases.
-HOSTAGE_PHASES = [
-    ["#105", "#111", "#114"],
-    ["#123", "#132"],
-    ["#146", "#149", "#154"],
-]
+# JTRAIDER.INT: talk_p_proc picks the talk by his state, not by anything the player says. First talk (var1 0; he
+# also starts it on sight): Raider0 105 -> Raider4 111 -> Raider5 114 -> Raider6 (UpReact). Raider6 and Raider7 set
+# var2: from then a player within 4 hexes is attacked (critter_p_proc). Second talk (map_var 3 is 1; set to 2):
+# Raider9 123 -> Raider14 132 -> a Speech +20 roll sets var6 (136/137), or fails (133); a reaction below 2 opens
+# Raider17 instead: 141 (IQ 8) -> a Speech roll sets var6 (144) or fails (143); 139 gives it up, 140 snaps. Third
+# talk: var6 opens Raider21 146 -> Raider22 149 -> Raider24 154, 100 caps -> safe(): map_var 4 (JUNKKILL's
+# map_update gives 1000 XP), SAVE_SINTHIA 2; without var6 Raider31 (168), whose answers only snap or fight. var1, var2
+# and var6 are script variables: no load between the talks.
+HOSTAGE_PLAN = ["#105", "#111", "#114", "#123", "#132", "#141", "#139", "#146", "#149", "#154"]
+HOSTAGE_OPENERS = {101: 1, 121: 2, 138: 2, 145: 3, 168: 3}  # his first reply: the talk it is
+HOSTAGE_ROLL_WON, HOSTAGE_ROLL_LOST, HOSTAGE_LOST = (136, 137, 144), (133, 143), 168
 
 NEAL_URN = ["#144"]  # NEAL.MSG 144 -> Neal11: karma +2
 
@@ -230,45 +232,71 @@ def clear_line(a: int, b: int, blocked: frozenset[int]) -> bool:
     return True
 
 
-def talk_from_afar(actor: Actor, who, plan: list[str], near: int = 5, far: int = 7) -> list | None:
-    """Talk to `who` from `near`..`far` hexes on a clear line: inside 9 hexes with nothing in the way the engine
-    talks at once, without walking up (fallout1-ce action_talk_to)."""
-    s = actor.snap()
-    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-    blocked = obs.blocked - {who.tile}
-    spots = {
-        t
-        for r in range(near, far + 1)
-        for t in geometry.ring(who.tile, r)
-        if t not in obs.blocked and clear_line(t, who.tile, blocked)
-    }
-    if s.dude.tile not in spots:
-        nav.go_to(actor, spots, max_steps=60)
-    if not actor.talk_to(who).ok:
-        return None
-    return dialogue.converse_strict(actor.mem, plan, log=actor.log)
+def hostage_progress(actor: Actor) -> tuple:
+    """What a talk with the raider changes that the game keeps: map_var 3 (1 before the second talk, 2 after it)."""
+    return quests.gvar(actor, "SAVE_SINTHIA"), quests.mvar(actor, 3)
 
 
-def the_hostage(actor: Actor) -> bool:
-    """The three talks with the raider, from 5-7 hexes, in one go (his phase flags are not saved)."""
+def said(steps: list, numbers: tuple[int, ...]) -> bool:
+    return any(dialogue.holds(reply, "jtraider", n) for reply, _options, _chosen in steps for n in numbers)
+
+
+def hostage_talk(actor: Actor, who) -> tuple[int, list | None]:
+    """One talk with the raider, answered from HOSTAGE_PLAN: (the talk his first reply opens, 0 when unknown; the
+    steps, None when no talk opened or a node had no plan answer). He starts the first talk on sight, also while the
+    step walks or its talk_to is under way (a talk_to failed "not on a living map" as his dialogue opened)."""
+    if not win32.wait_for(lambda: actor.snap().screen == "dialogue", 2, 0.2):
+        s = actor.snap()
+        obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
+        blocked = obs.blocked - {who.tile}
+        spots = {t for r in range(5, 8) for t in geometry.ring(who.tile, r)
+                 if t not in obs.blocked and clear_line(t, who.tile, blocked)}  # fmt: skip
+        if s.dude.tile not in spots and actor.snap().screen != "dialogue":
+            nav.go_to(actor, spots, max_steps=60)
+        talked = actor.snap().screen == "dialogue" or actor.talk_to(who).ok
+        if not talked and not win32.wait_for(lambda: actor.snap().screen == "dialogue", 2, 0.2):
+            return 0, None
+    d = dialogue.read(actor.mem)
+    talk = HOSTAGE_OPENERS.get(d.reply_message, 0) if d.reply_list == 337 else 0
+    if not talk:
+        talk = next((t for n, t in HOSTAGE_OPENERS.items() if dialogue.holds(d.reply, "jtraider", n)), 0)
+    if talk == 3 and dialogue.holds(d.reply, "jtraider", HOSTAGE_LOST):
+        return talk, None  # no answer of Raider31 saves her
+    return talk, dialogue.converse_strict(actor.mem, HOSTAGE_PLAN, log=actor.log)
+
+
+def the_hostage(actor: Actor) -> ObjectiveOutcome:
+    """The raider's talks from 5-7 hexes, in one go. Each talk is answered from one plan of every talk's answers, and
+    his first reply says which talk it is: a retry goes on where he is (a retry that started over at the first talk's
+    answers met his second talk, and a polite exit picked the last answers)."""
     if quests.gvar(actor, "SAVE_SINTHIA") == 2:
-        return True
+        return ObjectiveOutcome.achieved()
     actor.holster(True)
-    for phase, plan in enumerate(HOSTAGE_PHASES):
+    for _ in range(4):  # three talks, and one he may open on sight before the step's own
         who = quests.find_critter(actor, "jtraider")
         if who is None:
             break
-        if phase == 0 and win32.wait_for(lambda: actor.snap().screen == "dialogue", 1, 0.2):
-            steps = dialogue.converse_strict(actor.mem, plan, log=actor.log)  # he spoke first, on sight
-        else:
-            steps = talk_from_afar(actor, who, plan)
-        actor.log.emit("hostage", phase=phase + 1, talked=steps is not None)
-        settle(actor)
-        if actor.in_combat() or steps is None:
-            return False
-        time.sleep(1.0)
+        if quests.mvar(actor, 3) == 2 and actor._count(PID_CAPS) < 100:
+            return ObjectiveOutcome.recoverable("his last talk needs 100 caps")
+        talk, steps = hostage_talk(actor, who)
+        actor.log.emit("hostage", talk=talk, talked=steps is not None, map_var3=quests.mvar(actor, 3))
+        if steps is None:
+            lost = talk == 3 and dialogue.holds(dialogue.read(actor.mem).reply, "jtraider", HOSTAGE_LOST)
+            settle(actor, HOSTAGE_PLAN)
+            if lost:
+                return ObjectiveOutcome.unavailable("his Speech roll was lost before this talk: no answer saves her")
+            return ObjectiveOutcome.recoverable(f"talk {talk or '?'}: no plan answer or no talk")
+        settle(actor, HOSTAGE_PLAN)
+        if actor.in_combat():
+            return ObjectiveOutcome.recoverable("combat")
+        if talk == 2 and said(steps, HOSTAGE_ROLL_LOST) and not said(steps, HOSTAGE_ROLL_WON):
+            return ObjectiveOutcome.unavailable("his Speech roll failed: his third talk only snaps or fights")
+        if win32.wait_for(lambda: quests.gvar(actor, "SAVE_SINTHIA") == 2, 3 if talk == 3 else 1, 0.25):
+            break
     win32.wait_for(lambda: quests.gvar(actor, "SAVE_SINTHIA") == 2, 10, 0.25)
-    return quests.gvar(actor, "SAVE_SINTHIA") == 2 and not actor.in_combat()
+    if quests.gvar(actor, "SAVE_SINTHIA") == 2 and not actor.in_combat():
+        return ObjectiveOutcome.achieved()
+    return ObjectiveOutcome.recoverable("SAVE_SINTHIA is not 2 after the talks")
 
 
 def neals_urn(actor: Actor) -> bool:
@@ -383,7 +411,7 @@ IDEALIST_JUNKTOWN = [
     Step("Saul and Trish", saul, checkpoint=True, tries=4),
     Step("a room for the night", a_room_for_the_night),
     Step("the night in room #1", the_night_in_room_one, checkpoint=True, tries=4),
-    Step("Sinthia: the hostage talked down", the_hostage, checkpoint=True, tries=5),
+    Step("Sinthia: the hostage talked down", the_hostage, checkpoint=True, tries=5, progress=hostage_progress),
     # stealing Neal's urn to give it back is +2 karma for nothing (Junktown's scripts): an exploit
     Step("Neal's urn off the bar", neals_urn, checkpoint=True, tries=1, optional=True, exploit=True),
     Step(
