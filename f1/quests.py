@@ -123,6 +123,14 @@ def poison(actor: Actor) -> int:
     return actor.mem.i32(s.dude.address + em.Obj.CRITTER_POISON) if s.dude else 0
 
 
+def poison_bearable(actor: Actor, hp: int) -> bool:
+    """The poison left takes at most (poison + 1) // 2 HP (a tick: 1 HP and 2 poison); travel goes on while that
+    leaves MEND_FLOOR of max HP (less poison than POISON_MATTERS: always). The world map has no way to cure or rest it
+    out, so a stricter test ends the trip there: an ironman run fled a road fight stung (poison 4, HP 32 of 38)."""
+    left = poison(actor)
+    return left < POISON_MATTERS or hp - (left + 1) // 2 >= MEND_FLOOR * actor.max_hp
+
+
 def _clear_poison(actor: Actor) -> bool:
     """Drain poison with verified medicine/rest progress, never retry a rest at the emergency HP floor."""
     if not alive(actor.snap()) or getattr(actor.snap(), "screen", "map") != "map" or actor.in_combat():
@@ -671,8 +679,8 @@ def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: 
             continue
         if s.screen != "worldmap":
             return actor._end(False, f"travel interrupted by {s.screen}", {}, "visit").reason
-        if poison(actor) >= POISON_MATTERS or s.dude.hp <= poison(actor):
-            return actor._end(False, "unsafe to travel while poisoned", {}, "visit").reason
+        if not poison_bearable(actor, s.dude.hp):
+            return actor._end(False, "unsafe to travel while poisoned", {"poison": poison(actor)}, "visit").reason
         why = worldmap.travel(actor.pid, tx, ty)
         if why == "town map":  # a town's map: ours means pick the entrance, another means out to the world map
             if actor.mem.glob("our_town") != worldmap.town_index(town):

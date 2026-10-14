@@ -80,13 +80,20 @@ def kenji(actor: Actor) -> bool:
     once a fight Kenji began ended before the player's first turn (an ironman run with Ian: a critical for 56 killed
     him) and the job was never offered. Begun by the player instead (at 10, then 7 hexes), Kenji shot at the player:
     two of six ironman games fell from HP 38 to 6-7 and stopped with Kenji alive, where 16 fights he began had ended
-    at HP 25 or more. So he begins it."""
+    at HP 25 or more. So he begins it, and the fight stays: the gate weighs Kenji alone (he shoots at Killian, who
+    shoots back; not in the model) and refused him at full HP (death 0.45-0.53, three scout games); fleeing from
+    the store stuck in a corner, Killian and two more among the foes (one death), where the 16 games above
+    fought it out."""
     by_day(actor)
     quests.talk(actor, "Killian Darkwater", ["#107/121"])
     actor.holster(False)
     fought = win32.wait_for(actor.in_combat, 45, 0.25)
     if fought:
-        actor.fight(only=("Kenji",))
+        leave, actor.leave_refused = actor.leave_refused, False
+        try:
+            actor.fight(only=("Kenji",))
+        finally:
+            actor.leave_refused = leave
     time.sleep(1.5)
     settle(actor, KILLIAN_JOB)  # Killian speaks up after the fight and offers the job (a chain run)
     return fought and quests.find_critter(actor, "Kenji") is None and not actor.in_combat()
