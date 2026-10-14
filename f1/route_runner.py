@@ -270,7 +270,9 @@ def run(
     ironman: bool = False,
     progress: dict | None = None,
 ) -> dict:
-    """Run steps from `start` (1-based). `on_step(i)` is told each step's index (0-based) before it runs. Starting mid-way assumes slot 1 holds the checkpoint before it. With
+    """Run steps from `start` (1-based). `on_step(i)` is told each step's index (0-based) before it runs, with
+    actor.objective_progress current (the ledger, `leveled`, `fails`, `skipped`): another driver can take over before
+    that step in the same game with it as `progress`. Starting mid-way assumes slot 1 holds the checkpoint before it. With
     `level_up`, a checkpoint first spends a level-up when the level rose (the game adds the skill points only when
     the character screen opens, so the level is what tells). With `prefs`, the game's preferences are made so at the
     start and after every reload.
@@ -288,9 +290,10 @@ def run(
     steps = identified_steps(steps)
     actor.ironman = ironman
     actor.ending_audit = None
-    log, i, loads, leveled = actor.log, start - 1, {}, 0
-    fails: dict[str, int] = {}
-    skipped: list[str] = []
+    carry = progress or {}  # a driver taking over at a step boundary: the counters it carries on with
+    log, i, loads, leveled = actor.log, start - 1, {}, int(carry.get("leveled", 0))
+    fails: dict[str, int] = dict(carry.get("fails", {}))
+    skipped: list[str] = list(carry.get("skipped", []))
     last_failure: dict[str, tuple] = {}  # where the game stood after a step's last failure (fail fast)
     actor.objective_progress = None
     statuses, pending = inferred_progress(actor, steps, start, progress)
@@ -329,6 +332,8 @@ def run(
             i += 1
             continue
         if on_step:
+            if actor.objective_progress is not None:  # what a driver taking over before this step carries on with
+                actor.objective_progress.update(leveled=leveled, fails=fails, skipped=skipped)
             on_step(i)
         missing = [key for key in step.requires if statuses.get(key) != "achieved"]
         if missing:
@@ -546,7 +551,10 @@ def _drive(
     ironman: bool = False,
     out: dict | None = None,
     prefs: dict[str, int] | None = None,
+    progress: dict | None = None,
 ) -> int:
+    """Run `steps` from `start` on the running game, events to `run_dir`. `progress`: the objective ledger and the
+    counters (actor.objective_progress) of a driver that stopped before step `start` in this same game."""
     actor = Actor(session.game_pid(), EventLog(run_dir / "events.jsonl"))
     if speed:  # a test run's waits at a faster clock, none at the end
         actor.log.emit("clock", **clock.set_fast(actor.pid, speed).__dict__)
@@ -560,7 +568,16 @@ def _drive(
         try:
             hook = (lambda i: on_step(actor, i)) if on_step else None
             prefs = prefs or (flows.IRONMAN_PREFS if ironman else flows.BY_CHARACTER)
-            result = run(actor, steps, start, level_up=chargen.level_up, prefs=prefs, on_step=hook, ironman=ironman)
+            result = run(
+                actor,
+                steps,
+                start,
+                level_up=chargen.level_up,
+                prefs=prefs,
+                on_step=hook,
+                ironman=ironman,
+                progress=progress,
+            )
         except Exception as e:  # fail fast: a bug stops the run at once; what it saw goes in the events first
             fail_fast(actor, e)
             raise

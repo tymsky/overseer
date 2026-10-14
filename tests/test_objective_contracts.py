@@ -249,3 +249,34 @@ def test_optional_memory_error_is_not_an_optional_roll_failure(actor):
 
     result = route_runner.run(actor, [Step("bonus", unreadable, optional=True)], ironman=True)
     assert result["ended"] == "error" and result["status"] == "technical_error"
+
+
+def test_a_driver_taking_over_carries_the_ledger_and_counters_on(actor):
+    seen = []
+    steps = [
+        Step("pump", lambda a: True, id="pump", obligation="pump"),
+        Step("flaky", lambda a: len(seen) > 2, id="flaky", tries=3),
+        Step("chip", lambda a: True, id="chip", requires=("pump",)),
+    ]
+    first = route_runner.run(
+        actor, steps[:2], ironman=True, on_step=lambda i: seen.append(dict(actor.objective_progress))
+    )
+    assert first["ended"] == "done" and seen[-1]["fails"] == {"flaky": 1}
+    handed = {k: v for k, v in actor.objective_progress.items()}
+    handed["leveled"] = 3
+    later = []
+    result = route_runner.run(actor, steps, start=3, ironman=True, progress=handed,
+                              on_step=lambda i: later.append(dict(actor.objective_progress)))  # fmt: skip
+    assert result["ended"] == "done"
+    assert later[0]["statuses"]["pump"] == "achieved" and later[0]["fails"] == {"flaky": 1} and later[0]["leveled"] == 3
+
+
+def test_an_event_log_taken_over_numbers_on(tmp_path):
+    from f1.telemetry import EventLog
+
+    path = tmp_path / "events.jsonl"
+    EventLog(path).emit("a")
+    EventLog(path).emit("b")
+    with path.open("a", encoding="utf-8") as f:
+        f.write('{"seq": 7, "kind": "half')  # a line cut by a killed driver
+    assert EventLog(path).emit("c")["seq"] == 3

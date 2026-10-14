@@ -8,11 +8,27 @@ from pathlib import Path
 from typing import Any
 
 
+def last_seq(path: Path) -> int:
+    """The number of the last whole event in an existing log (0 for none)."""
+    try:
+        with path.open("rb") as f:
+            f.seek(max(0, f.seek(0, 2) - 65536))
+            tail = f.read()
+    except OSError:
+        return 0
+    for line in reversed(tail.splitlines()):
+        try:
+            return int(json.loads(line)["seq"])
+        except (ValueError, KeyError, TypeError):
+            continue
+    return 0
+
+
 class EventLog:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._seq = 0
+        self._seq = last_seq(path)  # a driver that takes over a run's log carries its numbering on
         self._lock = threading.Lock()  # a watchdog thread writes too
 
     def emit(self, kind: str, **fields: Any) -> dict[str, Any]:
