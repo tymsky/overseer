@@ -151,3 +151,16 @@ def test_travel_goes_on_unless_the_poison_left_would_take_the_hp_to_5(monkeypatc
     actor = Mender(hp, poison)
     monkeypatch.setattr(quests, "poison", lambda a: a.poison)
     assert quests.poison_bearable(actor, hp) is bearable
+
+
+def test_a_rest_of_one_tick_is_repeated_until_the_poison_is_out() -> None:
+    a = Mender(hp=37, poison=13, stimpaks=6)  # a scout after a radscorpion: each 2 h rest took one tick
+
+    def rest(how):
+        a.rests.append(how)
+        a.poison, a.hp = max(0, a.poison - 2), a.hp - 1
+        return SimpleNamespace(ok=True)
+
+    a.rest = rest
+    assert quests.mend_on_the_road(a)
+    assert a.poison < quests.POISON_MATTERS and len(a.rests) == 6 and a.hp == 31

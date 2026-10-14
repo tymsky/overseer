@@ -115,7 +115,7 @@ MEND_BELOW = 0.75  # of max HP: the spare stimpaks (above STIMPAKS_KEPT) heal up
 MEND_FLOOR = 0.5  # of max HP: below it after the poison, the kept stimpaks too; with none, a rest until healed
 POISON_MATTERS = 2  # a tick takes 1 HP and 2 poison: 1 left costs at most 1 HP (a road fight left it)
 POISON_REST = "2 hours"  # a tick every 505 - 5 x poison game seconds: poison 39 runs out in about 2.3 h
-MEND_RESTS = 4
+MEND_RESTS = 4  # at least; a rest may drain a single tick (scout, top speed: poison 9 -> 1 in 4 rests of 2 h)
 POISON_TRAVEL_HP = 5  # chosen, not measured: the HP a trip may leave after the poison (a rest stops at 5)
 
 
@@ -134,13 +134,15 @@ def poison_bearable(actor: Actor, hp: int) -> bool:
 
 
 def _clear_poison(actor: Actor) -> bool:
-    """Drain poison with verified medicine/rest progress, never retry a rest at the emergency HP floor."""
+    """Drain poison with verified medicine/rest progress, never retry a rest at the emergency HP floor. As many rests
+    as the poison has ticks: a scout's rests of 2 h each took one tick (1 HP, 2 poison), so four left a radscorpion's
+    poison in and the caves were deferred with six stimpaks and 33 of 43 HP."""
     if not alive(actor.snap()) or getattr(actor.snap(), "screen", "map") != "map" or actor.in_combat():
         return False
     before = poison(actor)
     if before >= POISON_MATTERS and actor._count(PID_ANTIDOTE):
         actor.use_on_self(PID_ANTIDOTE)
-    for _ in range(MEND_RESTS):
+    for _ in range(max(MEND_RESTS, (before + 1) // 2 + 1)):
         if not alive(actor.snap()) or actor.in_combat():
             return False
         amount, hp = poison(actor), actor.snap().dude.hp
