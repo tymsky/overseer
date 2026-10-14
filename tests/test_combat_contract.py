@@ -459,6 +459,24 @@ def test_a_fight_the_route_began_is_fought_through_a_refused_first_estimate(monk
     assert [d["accept"] for k, d in a.log.events if k == "encounter_risk"] == [False]
 
 
+def test_a_finished_fight_keeps_no_onlookers_for_later_combat_walks(monkeypatch):
+    """Onlookers limit a combat walk to one hex at a time; kept after their fight, they split the walk past
+    Hightower's hex in two and the second step stopped on it (his talk showed the player out)."""
+    a = combat_actor(monkeypatch)
+    foe, bystander = critter(200), critter(300)
+    a.enemies = lambda only=None: [foe]
+    a.forced_group = lambda: ([foe], [bystander])
+    monkeypatch.setattr(odds, "assess", lambda actor, foes, others: odds.Odds(1, 40, 1, 1, 95, 60, accept=True))
+
+    def attack(target):
+        a.combat = False
+        return actions.Outcome(True, "hit", {})
+
+    a.attack = attack
+    assert a.fight().reason == "combat over"
+    assert not getattr(a, "_combat_onlookers", ())
+
+
 def test_death_during_foe_turn_is_a_terminal_death_without_a_new_risk_assessment(monkeypatch):
     a = combat_actor(monkeypatch)
 

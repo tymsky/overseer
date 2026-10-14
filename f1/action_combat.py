@@ -370,6 +370,7 @@ class CombatActions:
         except BaseException as exc:
             self.log.emit("encounter_end", encounter_id=encounter, outcome="interrupted", error=type(exc).__name__)
             self._encounter_id = None
+            self._combat_onlookers = ()
             raise
         terminal = out.reason in ("combat over", "died", "refused; fled")
         self.log.emit(
@@ -384,6 +385,9 @@ class CombatActions:
             self._combat_hostile_teams = set()
             self._combat_hostile_context = None
             self._combat_targets = set()
+            # a later combat walk outside this fight goes on a hex at a time while onlookers are kept: Hightower's
+            # hex was crossed in two such steps and his talk showed the player out (an ironman scout)
+            self._combat_onlookers = ()
         return Outcome(out.ok, out.reason, out.detail | {"encounter_id": encounter})
 
     def _combat_action(self, action: str, **detail) -> None:
