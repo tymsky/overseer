@@ -143,11 +143,13 @@ def test_healing_does_not_start_a_long_rest_during_a_poison_emergency() -> None:
         (32, 4, True),  # measured: fled a road fight stung; the trip stopped on the world map
         (20, 7, True),  # measured: fled the caves stung; the trip back stopped on the world map
         (33, 54, True),  # about what a full run had: 33 HP, reached 6 on the way
-        (32, 54, False),  # 5 left
+        (32, 54, True),  # 5 left
+        (11, 14, True),  # measured: fled the caves at 11 HP, stopped on the world map; 4 left
+        (7, 14, False),  # the poison would take the last HP
         (5, 1, True),  # under POISON_MATTERS the HP is left to the travel days
     ],
 )
-def test_travel_goes_on_unless_the_poison_left_would_take_the_hp_to_5(monkeypatch, hp, poison, bearable):
+def test_travel_goes_on_unless_the_poison_left_would_kill(monkeypatch, hp, poison, bearable):
     actor = Mender(hp, poison)
     monkeypatch.setattr(quests, "poison", lambda a: a.poison)
     assert quests.poison_bearable(actor, hp) is bearable
