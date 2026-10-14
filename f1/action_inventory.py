@@ -536,6 +536,17 @@ class InventoryActions:
                 return Held(pid, self.mem.i32(item + Obj.ITEM_AMMO), self.mem.i32(item + Obj.ITEM_AMMO_PID))
         return None
 
+    def holstered(self) -> Held | None:
+        """The weapon in the other hand while the active one holds none: what B draws (holster(False)), as a
+        fight's first turn does (Actor.rearm)."""
+        if self.weapon() is not None:
+            return None
+        other = OBJECT_IN_RIGHT_HAND if self.mem.glob("itemCurrentItem") == 0 else OBJECT_IN_LEFT_HAND
+        for item, pid, _ in self.items():
+            if self.mem.u32(item + Obj.FLAGS) & other and weapons.weapon(pid) is not None:
+                return Held(pid, self.mem.i32(item + Obj.ITEM_AMMO), self.mem.i32(item + Obj.ITEM_AMMO_PID))
+        return None
+
     def active_item(self) -> int | None:
         """The pid of whatever the active hand holds (itemCurrentItem: 0 left, 1 right), a weapon or not."""
         flag = OBJECT_IN_LEFT_HAND if self.mem.glob("itemCurrentItem") == 0 else OBJECT_IN_RIGHT_HAND

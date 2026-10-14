@@ -160,3 +160,26 @@ def test_the_gate_and_the_old_rule() -> None:
     old = odds.Odds(win=0.85, hp_left=10, turns=3, rounds=4, hit=70, foe_hit=40)
     assert odds.accepted(old, 0.8) and not odds.accepted(old, 0.9)
     assert not odds.accepted(risk.as_odds(risk.Risk(100, 3200, 0.025, 0.04, 0, 3100, 1, 1, 1, 1, 1)), 0.0)
+
+
+def test_a_holstered_gun_is_the_weapon_weighed_in_combat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ironman run: Seth's talk holstered the gun, a radscorpion in the caves began a fight and fists were
+    weighed (death bound 1.0), refused and fled; the fight's first turn would have drawn the gun (Actor.rearm)."""
+    from types import SimpleNamespace
+
+    from f1 import weapons
+    from f1.action_shared import Held
+
+    pistol = 8
+    weighed = []
+    monkeypatch.setattr(risk.odds, "player_stats", lambda mem: [5] * 35)
+    monkeypatch.setattr(risk, "weapon_of", lambda pid, secondary, st: weighed.append(pid) or risk.FISTS)
+    monkeypatch.setattr(weapons, "skill", lambda pid, secondary=False: "small_guns")
+    monkeypatch.setattr(weapons, "uses_ammo", lambda pid: True)
+    actor = SimpleNamespace(
+        mem=None, max_hp=43, max_ap=9, in_combat=lambda: True, weapon=lambda: None,
+        holstered=lambda: Held(pistol, 6, 0), carried_weapons=list, skills=lambda: {"small_guns": 72},
+        _count=lambda pid: 0, snap=lambda: SimpleNamespace(dude=SimpleNamespace(hp=43, ap=9)),
+    )  # fmt: skip
+    fighter = risk.player(actor)
+    assert weighed == [pistol] and fighter.loaded == 6

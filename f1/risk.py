@@ -832,7 +832,9 @@ def player(actor) -> Fighter:
     combat = actor.in_combat()
     options = [] if combat else actor.weapon_options()
     o = options[0] if options else None
-    held = actor.weapon() if combat else None
+    # a weapon holstered for a town is drawn by the fight's first turn (Actor.rearm), so it is the one weighed: an
+    # ironman run weighed fists in the radscorpion caves after Seth's talk (death bound 1.0), refused and fled
+    held = (actor.weapon() or actor.holstered()) if combat else None
     pid = held.pid if held else o.pid if o else None
     carried = next((c for c in actor.carried_weapons() if c.pid == pid), None)
     w = weapon_of(pid, False, st[0])
