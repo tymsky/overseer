@@ -545,6 +545,7 @@ def _drive(
     on_step: Callable[[Actor, int], None] | None = None,
     ironman: bool = False,
     out: dict | None = None,
+    prefs: dict[str, int] | None = None,
 ) -> int:
     actor = Actor(session.game_pid(), EventLog(run_dir / "events.jsonl"))
     if speed:  # a test run's waits at a faster clock, none at the end
@@ -558,7 +559,7 @@ def _drive(
     try:
         try:
             hook = (lambda i: on_step(actor, i)) if on_step else None
-            prefs = flows.IRONMAN_PREFS if ironman else flows.BY_CHARACTER
+            prefs = prefs or (flows.IRONMAN_PREFS if ironman else flows.BY_CHARACTER)
             result = run(actor, steps, start, level_up=chargen.level_up, prefs=prefs, on_step=hook, ironman=ironman)
         except Exception as e:  # fail fast: a bug stops the run at once; what it saw goes in the events first
             fail_fast(actor, e)

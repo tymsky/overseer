@@ -122,6 +122,9 @@ IRONMAN_PREFS = {
     "combat_difficulty": 2, "game_difficulty": 2, "combat_speed": 0, "prf_running": 1, "player_speedup": 0,
     "music_volume": 0,
 }  # fmt: skip
+# An ironman scout (a development life beside the ironman run, to find its problems sooner): the same difficulties
+# and rules, every speed at its top.
+IRONMAN_TEST_PREFS = IRONMAN_PREFS | {"combat_speed": 50, "player_speedup": 1}
 BY_CHARACTER = "character"  # as `prefs`: the preferences of the character in the game (PREFS by its name)
 
 
