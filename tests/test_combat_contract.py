@@ -433,6 +433,32 @@ def test_risk_refused_after_joining_foe_flees_before_attacking_it(monkeypatch):
     assert [d["accept"] for k, d in a.log.events if k == "encounter_risk"] == [True, False]
 
 
+def test_a_fight_the_route_began_is_fought_through_a_refused_first_estimate(monkeypatch):
+    """Kenji and the raid on Gizmo: the model weighs no allies and refused them from the first estimate; the route
+    chose them from measured games, so they are fought (a forced fight is still left: the test above)."""
+    from f1 import quests
+
+    a = combat_actor(monkeypatch)
+    kenji = critter(200)
+    group, shots, fled = [kenji], [], []
+    a.enemies = lambda only=None: group
+    a.forced_group = lambda: (group, [])
+    monkeypatch.setattr(
+        odds, "assess", lambda actor, foes, others: odds.Odds(0, 40, 1, 1, 95, 60, death_high=0.53, accept=False)
+    )
+    monkeypatch.setattr(quests, "flee", lambda actor: fled.append(1) or True)
+
+    def attack(target):
+        shots.append(target.address)
+        a.combat = False
+        return actions.Outcome(True, "hit", {})
+
+    a.attack = attack
+    result = a.fight(only=("Kenji",))
+    assert result.ok and shots == [200] and fled == []
+    assert [d["accept"] for k, d in a.log.events if k == "encounter_risk"] == [False]
+
+
 def test_death_during_foe_turn_is_a_terminal_death_without_a_new_risk_assessment(monkeypatch):
     a = combat_actor(monkeypatch)
 

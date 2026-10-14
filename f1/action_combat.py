@@ -512,6 +512,11 @@ class CombatActions:
         # never shot at; 60 turns)
         blocked_before: set[int] = set()
         assessed = None
+        # A fight the route began (not forced) was chosen from measured games: its estimates are logged, and it is
+        # left only once one of them accepted and a later one refuses (the fight changed). The model weighs no
+        # allies: Kenji (shooting Killian first) and the raid on Gizmo (Lars's guards) were refused from their first
+        # estimate (death 0.45-1.0), fled, and one scout died stuck in Killian's store, one left Junktown.
+        accepted_before = forced
         for _ in range(max_rounds * 4):
             if rounds >= max_rounds:
                 break
@@ -539,6 +544,7 @@ class CombatActions:
             if signature != assessed and group:
                 assessed = signature
                 chance = odds.assess(self, group, others)
+                accept = odds.accepted(chance, FORCED_FLOOR)
                 self.log.emit(
                     "encounter_risk",
                     encounter_id=self._encounter_id,
@@ -548,15 +554,16 @@ class CombatActions:
                     hp=s.dude.hp,
                     death_high=chance.death_high,
                     win=chance.win,
-                    accept=odds.accepted(chance, FORCED_FLOOR),
+                    accept=accept,
                     rule=odds.RULE,
                 )
-                if not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
+                if not accept and self.leave_refused and accepted_before:
                     from f1 import quests
 
                     if quests.flee(self):
                         return self._end(False, "refused; fled", {"death_high": chance.death_high}, "fight")
                     self.log.emit("tactic", move="fight a refused fight", why="no way out")
+                accepted_before = accepted_before or accept
                 # Target failures only describe the geometry/equipment where they were observed.
                 missed.clear()
                 stuck_at.clear()
