@@ -165,6 +165,9 @@ class Fighter:
     ap_left: int = 0  # AP kept from its last turn (its AC bonus on the player's first turn)
     stimpaks: int = 0  # the player's
     initial_ap: int | None = None  # remaining AP of the observed turn; None: a fresh full turn
+    # the player's next gun once this one is dry (weapon, skill, loaded, spare), readied from the pack for the
+    # inventory's AP as Actor.rearm does; None: fists then
+    backup: tuple[Weapon, int, int | None, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -448,6 +451,7 @@ class _Me:
     stimpaks: int
     spent: int = 0
     dead: bool = False
+    backup: tuple[Weapon, int, int | None, int] | None = None
 
 
 @dataclass
@@ -581,6 +585,12 @@ def _player_turn(m: _Model, me: _Me, foes: list[_Foe], rng: random.Random, initi
                 continue
             if me.spare > 0:
                 break  # no AP to reload: the turn ends
+            if me.backup is not None:  # the gun is dry: the next one from the pack (Actor.rearm)
+                if ap < INVENTORY_AP:
+                    break
+                me.weapon, me.skill, me.loaded, me.spare = me.backup
+                me.backup, ap = None, ap - INVENTORY_AP
+                continue
             me.weapon, me.loaded, me.skill = FISTS, None, f.unarmed_skill  # the gun is dry: fists
             continue
         reach = w.reach
@@ -683,7 +693,7 @@ def _order(m: _Model, foes: list[_Foe]) -> list[_Foe | None]:
 def _trial(m: _Model, rng: random.Random) -> tuple[str, int, int, int]:
     """'death', 'win' or 'capped', the player's HP, the rounds, his gun's rounds spent."""
     me = _Me(
-        m.me.hp, 0, m.me.loaded, m.me.spare, m.me.weapon, m.me.skill, m.me.stimpaks,
+        m.me.hp, 0, m.me.loaded, m.me.spare, m.me.weapon, m.me.skill, m.me.stimpaks, backup=m.me.backup,
     )  # fmt: skip
     foes = [
         _Foe(f, f.hp, f.dist, f.ap_left, f.loaded, f.spare, f.weapon, f.skill, f.joins == 0)
@@ -848,7 +858,23 @@ def player(actor) -> Fighter:
         loaded=(held.loaded if held else carried.loaded if carried else 0) if pid and weapons.uses_ammo(pid) else None,
         spare=carried.spare if carried else 0, unarmed_skill=skills.get("unarmed", 0),
         stimpaks=actor._count(0x28), initial_ap=max(0, s.dude.ap) if combat else None,
+        backup=backup(actor, pid, st[0]) if pid is not None and weapons.uses_ammo(pid) else None,
     )  # fmt: skip
+
+
+def backup(actor, pid: int, strength: int) -> tuple[Weapon, int, int | None, int] | None:
+    """The weapon Actor.rearm readies once the gun PID is dry: the best other way to fight with rounds left
+    (weapons.choose), as (weapon, skill, loaded, spare); None when that is fists. An ironman run: a 9mm Mauser with
+    3 rounds and none spare was weighed as fists after them in the radscorpion caves (death bound 0.95), refused
+    and fled, with a 10mm Pistol and its rounds in the pack."""
+    from f1 import weapons
+
+    o = next((o for o in actor.weapon_options() if o.pid != pid), None)
+    if o is None or o.pid is None:
+        return None
+    c = next((c for c in actor.carried_weapons() if c.pid == o.pid), None)
+    loaded = (c.loaded if c else 0) if weapons.uses_ammo(o.pid) else None
+    return weapon_of(o.pid, False, strength), o.skill_value, loaded, c.spare if c else 0
 
 
 def live_foe(actor, c, here: int, joins: int | None = 0) -> Fighter:

@@ -73,6 +73,7 @@ def test_live_risk_uses_equipped_weapon_and_five_or_zero_ap(monkeypatch):
         max_hp=40,
         max_ap=10,
         carried_weapons=lambda: [SimpleNamespace(pid=8, loaded=7, spare=15)],
+        weapon_options=list,
         skills=lambda: {"small_guns": 60},
         _count=lambda pid: 3,
     )
@@ -489,3 +490,18 @@ def test_death_during_foe_turn_is_a_terminal_death_without_a_new_risk_assessment
     result = a.fight()
     assert result.reason == "died"
     assert a.log.events[-1][0] == "encounter_end" and a.log.events[-1][1]["outcome"] == "died"
+
+
+def test_a_dry_gun_gives_way_to_the_next_from_the_pack_not_fists():
+    """An ironman run: a 9mm Mauser with 3 rounds and none spare was weighed as fists after them against the
+    radscorpions (death bound 0.95), with a 10mm Pistol and its rounds in the pack; Actor.rearm readies that."""
+    import random
+
+    pistol = risk.Weapon("pistol", 5, 12, ap=5, reach=25, kind="ranged", capacity=12)
+    mauser = risk.Weapon("mauser", 10, 20, ap=5, reach=25, kind="ranged", capacity=7)
+    me = fighter(name="player", kill_type=None, weapon=mauser, loaded=0, spare=0, backup=(pistol, 70, 12, 24))
+    model = risk._Model(me, [fighter(hp=500, dist=1)], risk.Rules(game_time=0))
+    state = risk._Me(40, 0, 0, 0, mauser, 95, 0, backup=me.backup)
+    foes = [risk._Foe(model.foes[0], 500, 1, 0, None, 0, risk.FISTS, 50, True)]
+    risk._player_turn(model, state, foes, random.Random(1))
+    assert state.weapon == pistol and state.backup is None and state.spent > 0

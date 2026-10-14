@@ -178,8 +178,25 @@ def test_a_holstered_gun_is_the_weapon_weighed_in_combat(monkeypatch: pytest.Mon
     monkeypatch.setattr(weapons, "uses_ammo", lambda pid: True)
     actor = SimpleNamespace(
         mem=None, max_hp=43, max_ap=9, in_combat=lambda: True, weapon=lambda: None,
-        holstered=lambda: Held(pistol, 6, 0), carried_weapons=list, skills=lambda: {"small_guns": 72},
+        holstered=lambda: Held(pistol, 6, 0), carried_weapons=list, weapon_options=list, skills=lambda: {"small_guns": 72},
         _count=lambda pid: 0, snap=lambda: SimpleNamespace(dude=SimpleNamespace(hp=43, ap=9)),
     )  # fmt: skip
     fighter = risk.player(actor)
     assert weighed == [pistol] and fighter.loaded == 6
+
+
+def test_the_backup_is_the_best_other_way_to_fight_with_rounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from f1 import weapons
+
+    mauser, pistol = 9, 8
+    monkeypatch.setattr(risk, "weapon_of", lambda pid, secondary, st: pid)
+    monkeypatch.setattr(weapons, "uses_ammo", lambda pid: True)
+    options = [SimpleNamespace(pid=mauser, skill_value=55), SimpleNamespace(pid=pistol, skill_value=55)]
+    actor = SimpleNamespace(
+        weapon_options=lambda: options, carried_weapons=lambda: [SimpleNamespace(pid=pistol, loaded=6, spare=18)]
+    )
+    assert risk.backup(actor, mauser, 5) == (pistol, 55, 6, 18)
+    options[1] = SimpleNamespace(pid=None, skill_value=72)  # fists next: no backup
+    assert risk.backup(actor, mauser, 5) is None
