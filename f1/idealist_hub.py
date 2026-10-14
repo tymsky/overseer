@@ -195,12 +195,14 @@ LEON_PASS = ["#102", "#106"]  # HTWRLEON.MSG 102 (Speech 0), 106
 HIGHTOWER_BYE = ["@104"]  # HIGHTOWR.MSG 104, the player's name, 105: Daren04, shown out
 
 BOX_ENDS = (107, 106, 108, 109)  # HTWRBOX.MSG: unlocked, already unlocked, the trap, the lock jammed
-# HTWRBOX.INT use_skill_on_p_proc (f1.intdump): only local_var(0), the box unlocked, stops a try; a jam (a critical
-# failure, jam_lock) is never checked there, and the trap goes off once, at the third try (local_var(1)). So the lock
-# is tried until it opens: at Lockpick -20 a try is about 11 % on Hard for the Idealist (31 shown), and the six tries
-# that stopped at the trap or a jam failed nearly always; 30 tries open it about 97 % of the time. (That the engine
-# lets the script run on a jammed lock is read from the script, not measured.)
+# HTWRBOX.INT use_skill_on_p_proc (f1.intdump): only local_var(0), the box unlocked, stops a try, and the trap goes
+# off once, at the third try (local_var(1)). So the lock is tried until it opens: at Lockpick -20 a try is about 11 %
+# on Hard for the Idealist (31 shown); 30 tries open it about 97 % of the time. The script does not check a jam (a
+# critical failure, jam_lock), but the engine does: after 109 every try answered only "The lock is jammed." (an
+# ironman run, live; six tries until the watchdog ended the run). A jam is waited out away from the map, as the
+# Circle's doors.
 BOX_OPEN = (107, 106)
+BOX_JAMMED = 109
 BOX_TRIES = 30
 
 
@@ -279,22 +281,64 @@ def the_necklace(actor: Actor) -> bool:
         return False
     box = next((t for t in world.things(actor.mem) if t.tile == HEIGHTS_BOX and t.type != "critter"), None)
     targets = frozenset({box.address}) if box else frozenset()
-    for _ in range(BOX_TRIES):
-        heal_below(actor, 40)  # the trap at the third try: 6-36 damage
-        n0 = actor.mem.glob("disp_start")
-        # the lock's own answer: the aim's hovers print the box's look-at line too, and that ended each try
-        # before its click had answered (three tries, 33 s each, the 1x chain)
-        said = lambda n0=n0: " ".join(
-            m for m in state.messages_since(actor.mem, n0) if not m.lower().startswith("you see")
-        ).lower()
-        answered = lambda said=said: "strongbox" in said()
-        actor.use_skill_on("lockpick", HEIGHTS_BOX, answered, targets=targets)
-        win32.wait_for(answered, 3, 0.1)
-        text = said()
-        actor.log.emit("strongbox", said=text[-160:])
-        if any(dialogue.holds(text, "htwrbox", n) for n in BOX_OPEN):
-            break
+    if pick_the_box(actor, targets) == "jammed":
+        wait_out_the_jam(actor)
+        return False  # the step's next try comes back in by day
     return loot_the_box(actor)
+
+
+def pick_the_box(actor: Actor, targets: frozenset[int]) -> str:
+    """The box's lock tried up to BOX_TRIES times: "open", "jammed" (the engine refuses every try then), or
+    "tries". Each failed try leaves the same look: the watchdog's minute is quiet for the tries' time."""
+    watchdog.quiet(BOX_TRIES * 6)
+    try:
+        for _ in range(BOX_TRIES):
+            heal_below(actor, 40)  # the trap at the third try: 6-36 damage
+            n0 = actor.mem.glob("disp_start")
+            # the lock's own answer: the aim's hovers print the box's look-at line too, and that ended each try
+            # before its click had answered (three tries, 33 s each, the 1x chain)
+            said = lambda n0=n0: " ".join(
+                m for m in state.messages_since(actor.mem, n0) if not m.lower().startswith("you see")
+            ).lower()
+            answered = lambda said=said: "strongbox" in said() or "jammed" in said()
+            actor.use_skill_on("lockpick", HEIGHTS_BOX, answered, targets=targets)
+            win32.wait_for(answered, 3, 0.1)
+            text = said()
+            actor.log.emit("strongbox", said=text[-160:])
+            if any(dialogue.holds(text, "htwrbox", n) for n in BOX_OPEN):
+                return "open"
+            if dialogue.holds(text, "htwrbox", BOX_JAMMED) or "jammed" in text:
+                return "jammed"
+        return "tries"
+    finally:
+        watchdog.unquiet()
+
+
+def wait_out_the_jam(actor: Actor) -> None:
+    """A jammed lock unjams when its map is entered 24 hours after it was left (CE map.c, as the Circle's doors):
+    out of the Heights to Downtown, 25 hours of rest there, then on to the day (the guards are passive by day)."""
+    actor.log.emit("strongbox", said="jammed: 25 hours away in Downtown")
+    if not out_of_the_heights(actor, "HUBDWNTN"):
+        return
+    until = actor.snap().game_time + DAY + DAY // 24
+    for _ in range(8):
+        if actor.snap().game_time >= until or not actor.rest("6 hours").ok:
+            break
+    hub_rest_until(actor, 8, 16)
+
+
+def out_of_the_heights(actor: Actor, name: str) -> bool:
+    """To map `name`: the way out of the Heights crosses Hightower's hex, and his talk starts there."""
+    for _ in range(3):
+        if on_map(actor, name):
+            break
+        if dialogue.read(actor.mem).active:  # Daren04 (582:104): Leon shows the player out, politely (no threat)
+            settle(actor, HIGHTOWER_BYE)
+            win32.wait_for(lambda: actor.snap().screen == "map" and not dialogue.read(actor.mem).active, 8, 0.25)
+            time.sleep(2.0)  # LeonPerformDump fades the player out to 21931
+        if hub_map(actor, name):
+            break
+    return on_map(actor, name)
 
 
 def loot_the_box(actor: Actor) -> bool:
@@ -313,16 +357,7 @@ LOXLEY_NECKLACE = ["#188"]  # LOXLEY.MSG 188: STEAL_NECKLACE 2, 500 XP (loxley29
 def necklace_to_loxley(actor: Actor) -> bool:
     if quests.gvar(actor, "STEAL_NECKLACE") >= 2:
         return True
-    for _ in range(3):  # out of the Heights: the way out crosses Hightower's hex, and his talk starts there
-        if on_map(actor, "HUBOLDTN"):
-            break
-        if dialogue.read(actor.mem).active:  # Daren04 (582:104): Leon shows the player out, politely (no threat)
-            settle(actor, HIGHTOWER_BYE)
-            win32.wait_for(lambda: actor.snap().screen == "map" and not dialogue.read(actor.mem).active, 8, 0.25)
-            time.sleep(2.0)  # LeonPerformDump fades the player out to 21931
-        if hub_map(actor, "HUBOLDTN"):
-            break
-    if not (on_map(actor, "HUBOLDTN") and into_the_circle(actor)):
+    if not (out_of_the_heights(actor, "HUBOLDTN") and into_the_circle(actor)):
         return False
     actor.holster(True)
     quests.talk(actor, "loxley", LOXLEY_NECKLACE, strict=True)
