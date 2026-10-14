@@ -103,6 +103,7 @@ HOT_SPOTS = {  # HOTSPOT spatials: 20-50 rads for every step inside
     ("GLOW1", 2): ((20107, 4),),
 }
 
+ZAX_ACCESS_TALKS = 16  # talks while the mainframe denies access (ZAX.INT Mainframe00: Science -10, free to retry)
 ZAX_TRIES = 4  # deactivation tries (10 game minutes each, +5 h a failure): inside one Rad-X window
 
 ZAX_RECORDS = (
@@ -261,11 +262,13 @@ def zax_next(actor: Actor, goal: str, d, tries: int, most: int) -> tuple[int | N
     return pick("gpwrterm#229", "gpwrterm#203", "gpwrterm#205", "gpwrterm#204"), tries  # download, menu, end, exit
 
 
-def zax(actor: Actor, goal: str, most: int = ZAX_TRIES) -> None:
+def zax(actor: Actor, goal: str, most: int = ZAX_TRIES) -> bool:
     """One talk with Zax (the "Terminal" ZAX on GLOW2 e0), steered node by node: its menus come back to themselves
     (a download returns to Research), so a phrase list would loop. `goal`: "downloads", "power" or "robots".
-    ZAX.MSG / GPWRTERM.MSG (list 828); never 105/111/112 (ZaxClearance arms the robots again), never chess."""
+    ZAX.MSG / GPWRTERM.MSG (list 828); never 105/111/112 (ZaxClearance arms the robots again), never chess.
+    True when the mainframe denied access (GPWRTERM.MSG 201)."""
     mem = actor.mem
+    denied = False
     quests.use_scenery(actor, ("zax",), lambda: dialogue.read(mem).active, "Zax")
     tries = 0
     for _ in range(40):
@@ -275,6 +278,7 @@ def zax(actor: Actor, goal: str, most: int = ZAX_TRIES) -> None:
         if not d.options:
             time.sleep(0.3)
             continue
+        denied = denied or (dialogue.list_name(d.reply_list), d.reply_message) == ("gpwrterm", 201)
         i, tries = zax_next(actor, goal, d, tries, most)
         if i is None and len(d.options) == 1:
             i = 0
@@ -292,28 +296,34 @@ def zax(actor: Actor, goal: str, most: int = ZAX_TRIES) -> None:
         glow_power=quests.gvar(actor, "GLOW_POWER"),
         weapons_armed=quests.gvar(actor, "WEAPONS_ARMED"),
         downloads=[quests.gvar(actor, g) for _, g in ZAX_RECORDS],
+        denied=denied,
     )
+    return denied
+
+
+def zax_until(actor: Actor, goal: str, done) -> bool:
+    """Talks with Zax for `goal` until `done`, again while the mainframe denies access: its Science roll (-10) costs
+    nothing and may be retried while Science is 25 or more (ZAX.INT Mainframe00); a scout was denied twice and the
+    route ended there."""
+    for _ in range(ZAX_ACCESS_TALKS):
+        if done() or not zax(actor, goal):
+            break
+    return done()
 
 
 def zax_downloads(actor: Actor) -> bool:
-    if all(quests.gvar(actor, g) for _, g in ZAX_RECORDS):
-        return True
-    zax(actor, "downloads")
-    return all(quests.gvar(actor, g) for _, g in ZAX_RECORDS)
+    return zax_until(actor, "downloads", lambda: all(quests.gvar(actor, g) for _, g in ZAX_RECORDS))
 
 
 def zax_power(actor: Actor) -> bool:
-    if quests.gvar(actor, "GLOW_POWER") == 2:
-        return True
-    zax(actor, "power")
-    return quests.gvar(actor, "GLOW_POWER") == 2
+    return zax_until(actor, "power", lambda: quests.gvar(actor, "GLOW_POWER") == 2)
 
 
 def zax_robots(actor: Actor) -> bool:
     """The robots off (Science -25; each failure 5 game hours), at most ZAX_TRIES times; Level 5 waits on it."""
     if quests.gvar(actor, "WEAPONS_ARMED") or quests.gvar(actor, "GLOW_POWER") != 2:
         return True
-    zax(actor, "robots")
+    zax_until(actor, "robots", lambda: bool(quests.gvar(actor, "WEAPONS_ARMED")))
     return bool(quests.gvar(actor, "WEAPONS_ARMED"))
 
 
