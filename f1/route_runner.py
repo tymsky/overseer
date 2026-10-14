@@ -2,6 +2,7 @@
 
 import contextlib
 import time
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -117,7 +118,8 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[ObjectiveOutcome, b
         if result and step.verify is not None and not step.verify(actor):
             result = ObjectiveOutcome.recoverable("objective postcondition not verified")
     except STEP_ERRORS as e:
-        log.emit("step_error", step=step.name, error=repr(e)[:300])
+        where = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_tb(e.__traceback__)]
+        log.emit("step_error", step=step.name, error=repr(e)[:300], where=where[-6:])
         result, stuck = ObjectiveOutcome("technical_error", repr(e)[:300]), isinstance(e, watchdog.Stuck)
     ok = bool(result)
     watchdog.clear()  # a trip after the step's last look belongs to no one now

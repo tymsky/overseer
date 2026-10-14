@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from f1 import engine_map as em
 from f1.engine_map import MapHeader, Obj
 from f1.geometry import Camera
-from f1.memory import GameMemory
+from f1.memory import GameMemory, ReadError
 
 PC_STAT_LEVEL, PC_STAT_EXPERIENCE = 1, 2  # indexes into curr_pc_stat
 
@@ -191,14 +191,20 @@ def read_critter(mem: GameMemory, address: int) -> Critter:
 
 
 def objects(mem: GameMemory) -> list[int]:
-    """Addresses of every object on the map, from objectTable's per-tile lists."""
+    """Addresses of every object on the map, from objectTable's per-tile lists. The game moves objects between the
+    lists while they are read: a node read with no object (0) is skipped and a list that comes apart mid-read ends
+    there (a counted life read an object at 0 opening a door in the Thieves' Circle, and its route ended)."""
     heads = struct.unpack("<40000I", mem.read(em.GLOBALS["objectTable"].address, 4 * 40000))
     out = []
     for node in heads:
         hops = 0
         while node and hops < 1000:
-            obj, node = struct.unpack("<II", mem.read(node, 8))
-            out.append(obj)
+            try:
+                obj, node = struct.unpack("<II", mem.read(node, 8))
+            except ReadError:
+                break
+            if obj:
+                out.append(obj)
             hops += 1
     return out
 
