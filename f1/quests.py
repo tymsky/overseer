@@ -489,14 +489,14 @@ def _go(actor: Actor, goal, action: str) -> bool:
 
 
 def close_dialogue(actor: Actor, nodes: int = 4) -> bool:
-    """End a talk someone started: a polite exit option, else the last one (often "[Done]"). True once none is up."""
+    """End a talk someone started: a polite exit option, else the last one (often "[Done]") unless it is rude
+    (dialogue.closing). True once none is up."""
     for _ in range(nodes):
         d = dialogue.read(actor.mem)
         if not d.active:
             return True
         if d.options:
-            i = dialogue.leave(d.options)
-            i = len(d.options) - 1 if i is None else i
+            i = dialogue.closing(d.options)
             actor.log.emit("dialogue", speaker=d.speaker, reply=d.reply, options=d.options, chosen=d.options[i])
             dialogue.choose(actor.mem, i)
         else:

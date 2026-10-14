@@ -252,9 +252,26 @@ def leave(options: list[str]) -> int | None:
     return next((i for i, o in enumerate(options) if any(e in o.lower() for e in EXITS)), None)
 
 
+# options that turn the speaker hostile, as measured: Necropolis's Hotel Zombie Guard (its last options, an ironman
+# run: chosen to close the talk he began, he attacked at a death bound of 0.95 and the run stopped)
+RUDE = ("what's it to you", "wormface", "shove it up")
+
+
+def closing(options: list[str]) -> int:
+    """The option that ends a talk someone else began: its polite exit, else the last (often "[Done]") unless that
+    is a rude one, then the first that is not."""
+    i = leave(options)
+    if i is not None:
+        return i
+    rude = [any(r in o.lower() for r in RUDE) for o in options]
+    if not rude[-1]:
+        return len(options) - 1
+    return next((i for i, r in enumerate(rude) if not r), len(options) - 1)
+
+
 def close(mem: GameMemory, tries: int = 6) -> bool:
     """Out of a barter screen (Escape leaves it for its talk: inventry.c barter_inventory) and out of the talk by
-    its polite exit, or its last option. True when neither is left. A shopkeeper's shelf used by a loot sweep opened
+    its polite exit, or its last option that is not rude (closing). True when neither is left. A shopkeeper's shelf used by a loot sweep opened
     Killian's barter in his store, and a checkpoint's save stood before it (Junktown)."""
     for _ in range(tries):
         screen = state.detect_screen(mem)
@@ -268,8 +285,7 @@ def close(mem: GameMemory, tries: int = 6) -> bool:
         if not d.options:
             time.sleep(0.4)
             continue
-        i = leave(d.options)
-        choose(mem, i if i is not None else len(d.options) - 1)
+        choose(mem, closing(d.options))
     return state.detect_screen(mem) != "barter" and not read(mem).active
 
 
