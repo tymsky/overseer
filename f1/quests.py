@@ -230,7 +230,11 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
     log = actor.log
     end = time.monotonic() + minutes * 60
     kills = heals = backs = 0
-    tried_heal = False  # since the last fight
+    # the HP the last heal left (None: none since the hunt's last fight): healed again only below it. A fight a foe
+    # begins on the hunt's walk is fought inside the walk (nav.go_to), so the HP is what tells a new hurt: the
+    # radscorpion caves, an ironman run: two such fights took 38 HP to 22 after a heal, no heal followed with four
+    # stimpaks carried, and the next radscorpion's turn took 27
+    healed_to: int | None = None
     began = False  # the hunt pressed for the fight, after the odds accepted it
     known = len(foes_of(actor, kind))
     log.emit("hunt_start", species=kind, foes=known)
@@ -263,7 +267,7 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             # fought out when the hunt began it (weighed, healed); one a foe began is weighed first (a walk's last
             # step: nine radscorpions fought unweighed, six stimpaks, a poisoned death)
             fought = actor.fight(min_hp=0, forced=not began)
-            began = tried_heal = False
+            began, healed_to = False, None
             if fought.reason == "refused; fled":
                 return done("fled a refused fight")
             continue
@@ -275,10 +279,11 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
         if not left:
             return done("cleared")
         hp = actor.snap().dude.hp
-        if hp < HEAL_BELOW * actor.max_hp and not tried_heal:
-            heals, tried_heal = heals + 1, True
+        if hp < HEAL_BELOW * actor.max_hp and (healed_to is None or hp < healed_to):
+            heals += 1
             log.emit("hunt_heal", hp=hp, stimpaks=actor._count(PID_STIMPAK))
             heal(actor)
+            healed_to = actor.snap().dude.hp
             continue
         if hp < FIGHT_ABOVE * actor.max_hp and not actor.in_combat():
             return done("too hurt to fight on")
