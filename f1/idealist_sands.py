@@ -302,7 +302,10 @@ def remaining_cave_outcome(actor: Actor):
         actor.caves_deferred = False
         return ObjectiveOutcome.achieved(resolves=("sands.caves",))
     if not on_map(actor, "CAVES"):
-        return ObjectiveOutcome.recoverable("remaining caves were not reached")
+        # Seth's trip ended in the caves (back_to_the_caves checks it), so out of them now means a fight there the
+        # gate refused was fled (an ironman run: a death bound of 1.0 on the walk in, out to the world map, and the
+        # retry at once found the same and stopped the run): the rest wait like the first visit's
+        return ObjectiveOutcome.deferred("a fight in the caves was refused and fled", "sands.caves")
     ok = the_rest_of_the_caves(actor)
     if ok:
         actor.caves_deferred = False

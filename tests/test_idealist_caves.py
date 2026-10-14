@@ -47,3 +47,13 @@ def test_fled_caves_do_not_get_reentered_just_for_a_tail(monkeypatch):
     monkeypatch.setattr(sands, "into_the_caves", lambda a: entered.append(True))
     result = sands.scorpion_tail(actor)
     assert result.status == "deferred" and entered == []
+
+
+def test_the_second_visit_fled_waits_instead_of_stopping_the_run(monkeypatch):
+    # an ironman run: Seth's trip reached the caves, a fight on the walk in was refused (death bound 1.0) and fled to
+    # the world map; "not reached" was retried at once, met the same and the run stopped for no progress
+    actor = SimpleNamespace(caves_deferred=False)
+    monkeypatch.setattr(sands.quests, "gvar", lambda a, name: 5)
+    monkeypatch.setattr(sands, "on_map", lambda a, name: False)
+    result = sands.remaining_cave_outcome(actor)
+    assert result.status == "deferred" and result.obligation == "sands.caves"

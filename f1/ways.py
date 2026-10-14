@@ -491,6 +491,9 @@ def go(actor, goal: tuple[str, int] | str, walls: doors.Walls | None = None) -> 
     done: list[dict] = []
     for _ in range(12):
         s = actor.snap()
+        if alive(s) and s.screen == "map" and actor.in_combat():
+            fight_through(actor)
+            s = actor.snap()
         if not alive(s) or s.screen not in {"map", "worldmap"} or actor.in_combat():
             return Result(False, "not on a safe map", {"ways": done, **where(actor)})
         if s.screen == "worldmap" and isinstance(goal, str) and goal.upper() in ("WORLD MAP", "TOWN MAP"):
@@ -502,6 +505,16 @@ def go(actor, goal: tuple[str, int] | str, walls: doors.Walls | None = None) -> 
             return Result(True, "there", {"ways": done})
         r = take(actor, ways[0], walls)
         done.append(r.detail)
-        if not r.ok:
+        if not r.ok and not (alive(actor.snap()) and actor.in_combat()):
             return Result(False, r.why, {"ways": done})
     return Result(False, "too many ways", {"ways": done})
+
+
+def fight_through(actor) -> bool:
+    """A fight a foe began on the way, weighed and fought as go_to's walk fights it (a refused one fled when the actor
+    flees refused fights). An ironman run: a rat in Vault 13's cave began one as the bot walked out, the way ended
+    and the step's retry found the fight still on and stopped the run. True once it is over and safe to go on."""
+    from f1 import quests
+
+    out = actor.fight(forced=True)
+    return out.ok and not actor.in_combat() and quests.prepare_after_fight(actor)

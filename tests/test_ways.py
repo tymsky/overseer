@@ -190,3 +190,39 @@ def test_own_door_way_past_the_engines_node_cap(monkeypatch):
     actor = SimpleNamespace(mem=None, snap=lambda: SimpleNamespace(elevation=0, map_name="JUNKKILL.MAP", dude=dude))
     path = ways.own_door_way(actor, goal, doors.Walls())
     assert path is not None and path[-1] == goal and start not in path and door in path
+
+
+def test_a_fight_a_foe_began_on_the_way_is_fought_and_the_way_goes_on(monkeypatch):
+    """Vault 13's cave: a rat began a fight as the bot walked out, the way ended in combat, the step's retry found it
+    still on ("not on a safe map") and the run stopped. The fight is fought, then the way planned again."""
+    from types import SimpleNamespace
+
+    from f1 import quests
+
+    state = {"combat": False, "screen": "map", "taken": 0}
+    dude = SimpleNamespace(hp=30, tile=17090, dead=False)
+    fights = []
+
+    def take(actor, way, walls):
+        state["taken"] += 1
+        if state["taken"] == 1:
+            state["combat"] = True
+            return ways.Result(False, "unexpected state", {})
+        state["screen"] = "worldmap"
+        return ways.Result(True, "used", {})
+
+    def fight(forced=False):
+        fights.append(forced)
+        state["combat"] = False
+        return SimpleNamespace(ok=True)
+
+    actor = SimpleNamespace(
+        snap=lambda: SimpleNamespace(screen=state["screen"], map_name="V13ENT.SAV", elevation=0, dude=dude),
+        in_combat=lambda: state["combat"],
+        fight=fight,
+    )
+    monkeypatch.setattr(ways, "plan", lambda here, goal: [] if state["screen"] == "worldmap" else ["exit"])
+    monkeypatch.setattr(ways, "take", take)
+    monkeypatch.setattr(quests, "prepare_after_fight", lambda a: True)
+    r = ways.go(actor, "WORLD MAP")
+    assert r.ok and fights == [True] and state["taken"] == 2
