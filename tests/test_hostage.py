@@ -1,6 +1,6 @@
 """The raider's talks (JTRAIDER.INT) on a made-up screen: the step answers the talk he opens, not a count it keeps.
 
-Measured live: a retry that started over at the first talk's answers met his second talk ("Stay back"); a polite
+Measured live: a retry that started over at the first talk's answers met his second talk (#121); a polite
 exit then picked the answers, the talk went on, and the route ended as "the game did not change"."""
 
 from types import SimpleNamespace
@@ -8,33 +8,37 @@ from types import SimpleNamespace
 from f1 import dialogue, idealist_junktown, intdump, knowledge
 from f1.dialogue import Dialogue, Option
 
+# made-up texts (the step answers by message number, and knows his talks by their numbers)
 TEXTS = {
-    101: "That's it! Don't come any closer.",
-    105: "There is no need for violence.",
-    110: "What world do you live in?",
-    111: "We can talk this over.",
-    112: "Ok, ok. I'm backing off.",
-    113: "Who says I want help?",
-    114: "You do.",
-    115: "I gotta think about this.",
-    116: "Yeah. Don't try anything.",
-    121: "Stay back.",
-    122: "Don't, or I'll have to hurt you.",
-    123: "Why do you want to hurt her?",
-    131: "She laughed at me.",
-    132: "I trust you.",
-    133: "Maybe. I dunno.",
-    136: "You sound like an all right kind of guy.",
-    145: "Where do we go from here?",
-    146: "You tell me.",
-    147: "I want some money.",
-    148: "Sorry, we can't do that.",
-    149: "Sure.",
-    153: "I want $100.",
-    154: "Here's your money.",
-    155: "I don't have that kind of cash on me.",
-    168: "You seem like a liar and a cheat to me.",
-    169: "Feeling's mutual bud.",
+    n: f"raider message {n}."
+    for n in (
+        101,
+        105,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        121,
+        122,
+        123,
+        131,
+        132,
+        133,
+        136,
+        145,
+        146,
+        147,
+        148,
+        149,
+        153,
+        154,
+        155,
+        168,
+        169,
+    )
 }
 # node: (his message, [(answer, next node)]); a node without answers is a gsay_message ([Done])
 NODES = {
@@ -126,7 +130,7 @@ def setup(monkeypatch, raider: Raider):
 
 
 def test_a_retry_after_the_first_talk_answers_his_second_and_third(monkeypatch):
-    raider = Raider(var1=1)  # the measured case: the first talk ended on "backing off" in the failed try
+    raider = Raider(var1=1)  # the measured case: the first talk ended on his backing off (#112) in the failed try
     actor, events = setup(monkeypatch, raider)
     before = idealist_junktown.hostage_progress(actor)
     assert idealist_junktown.the_hostage(actor).status == "achieved"

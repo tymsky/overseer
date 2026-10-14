@@ -149,7 +149,7 @@ class Tracker:
             return None
         limit = limit_for(screen)
         # a message box's allowance runs from its own opening: a second locker beside the first gave the same looks
-        # (the tile, "You search the Locker.", the how-many box), and its how-many box, answered in a second, tripped
+        # (the tile, the search message, the how-many box), and its how-many box, answered in a second, tripped
         # 9 s after the last new look (the Glow's lockers, two ironman runs)
         start = max(self.since, self.screen_since) if state.window_kind(screen) == "box" else self.since
         if limit is None or now - start <= limit:

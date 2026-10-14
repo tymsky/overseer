@@ -198,7 +198,7 @@ BOX_ENDS = (107, 106, 108, 109)  # HTWRBOX.MSG: unlocked, already unlocked, the 
 # HTWRBOX.INT use_skill_on_p_proc (f1.intdump): only local_var(0), the box unlocked, stops a try, and the trap goes
 # off once, at the third try (local_var(1)). So the lock is tried until it opens: at Lockpick -20 a try is about 11 %
 # on Hard for the Idealist (31 shown); 30 tries open it about 97 % of the time. The script does not check a jam (a
-# critical failure, jam_lock), but the engine does: after 109 every try answered only "The lock is jammed." (an
+# critical failure, jam_lock), but the engine does: after 109 every try answered only the engine's jam message (an
 # ironman run, live; six tries until the watchdog ended the run). A jam is waited out away from the map, as the
 # Circle's doors.
 BOX_OPEN = (107, 106)

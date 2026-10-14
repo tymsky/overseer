@@ -452,7 +452,7 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
     clamped: set[int] = set()  # where Home could not centre the view (a map's edge)
     homed: set[int] = set()  # where the player was off the view and Home was pressed
     asides = 0  # steps back to let a companion out of the only way
-    closed = 0  # companions' talks a click opened, closed (by their polite exit, never "You can leave now.")
+    closed = 0  # companions' talks a click opened, closed (by their polite exit, never the curt dismissal)
     for step in range(max_steps):
         s = actor.snap()
         if not alive(s):

@@ -463,6 +463,14 @@ def test_a_driver_taking_over_carries_the_read_retries_spent(loads: list[int]) -
     assert result["ended"] == "error" and again == ["door"]
 
 
+def test_a_handoff_written_before_read_retries_counts_none_spent(loads: list[int]) -> None:
+    """A driver taking over from older code: its progress has no read_retried, so the step keeps its retry."""
+    ran: list[str] = []
+    handed = {"statuses": {}, "pending": {}, "leveled": 0, "fails": {}, "skipped": []}
+    result = routes.run(FakeActor(), [Step("the doors", racing(ran, 1))], ironman=True, progress=handed)
+    assert result["ended"] == "done" and ran == ["door", "door"]
+
+
 def test_a_game_gone_mid_read_is_no_race_to_try_again(loads: list[int]) -> None:
     ran: list[str] = []
 
