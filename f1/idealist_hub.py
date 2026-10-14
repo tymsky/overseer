@@ -206,6 +206,8 @@ BOX_JAMMED = 109
 BOX_TRIES = 30
 
 
+FRONT_INSIDE = (22325, 22326)  # inside the front door 21928
+
 HIGHTOWERS_HEX = (
     24522  # HIGHTOWR critter_p_proc: by day he starts his talk (every answer ends in him showing the player out) there
 )
@@ -217,7 +219,18 @@ def box_side(actor: Actor) -> bool:
     hexes before it on foot, A, a combat walk past it, Enter to end the combat."""
     s = actor.snap()
     obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
-    free = {t for t in geometry.ring(HEIGHTS_BOX, 1) if t not in obs.blocked and t != HIGHTOWERS_HEX}
+    return past_hightower(
+        actor, {t for t in geometry.ring(HEIGHTS_BOX, 1) if t not in obs.blocked and t != HIGHTOWERS_HEX}
+    )
+
+
+def past_hightower(actor: Actor, free: set[int]) -> bool:
+    """To any of `free`, Hightower's hex crossed in combat mode when the way crosses it (box_side). Both ways: his
+    talk there runs Daren01 once (local_var 4), and every later talk is "Guards! Assassin!" and combat (HIGHTOWR.INT
+    talk_p_proc): an ironman run waited out a jam, came back in, took the necklace, walked out across his hex and was
+    shot by the household."""
+    s = actor.snap()
+    obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
     if s.dude.tile in free:
         return True
     path = nav.astar(s.dude.tile, free, obs.passable_doors)
@@ -265,7 +278,7 @@ def the_necklace(actor: Actor) -> bool:
     # (111 here), then 106; left unanswered, the skill keys sent into
     # it ended in a fight with the household, four deaths. Every walk inside ends with any talk settled.
     nav.open_door(actor, 21928)  # in by the front door first: the way to the box plans through it only once open
-    nav.go_to(actor, {22325, 22326}, max_steps=20)
+    nav.go_to(actor, set(FRONT_INSIDE), max_steps=20)
     at_box = False
     for _ in range(3):
         win32.wait_for(lambda: dialogue.read(actor.mem).active, 3, 0.2)  # Leon speaks up within 6 hexes
@@ -328,7 +341,10 @@ def wait_out_the_jam(actor: Actor) -> None:
 
 
 def out_of_the_heights(actor: Actor, name: str) -> bool:
-    """To map `name`: the way out of the Heights crosses Hightower's hex, and his talk starts there."""
+    """To map `name`: the way out of the Heights crosses Hightower's hex, and his talk starts there; it is crossed in
+    combat mode to the front door's inside first (past_hightower), and a talk that opens all the same is answered."""
+    if on_map(actor, "HUBHEIGT") and actor.snap().elevation == 0 and not dialogue.read(actor.mem).active:
+        past_hightower(actor, set(FRONT_INSIDE))
     for _ in range(3):
         if on_map(actor, name):
             break

@@ -57,3 +57,24 @@ def test_a_jammed_lock_stops_the_tries(monkeypatch) -> None:
 def test_failed_tries_go_on_to_the_limit(monkeypatch) -> None:
     a = box_actor(monkeypatch, ["You were unable to unlock the strongbox."])
     assert idealist_hub.pick_the_box(a, frozenset()) == "tries" and a.tries == idealist_hub.BOX_TRIES
+
+
+def test_the_way_out_crosses_hightowers_hex_in_combat_mode_first(monkeypatch) -> None:
+    """The measured case (an ironman run, live): a jam waited out, the box opened on the way back in, and the walk out
+    stepped on Hightower's hex: his second talk is "Guards! Assassin!" (HIGHTOWR.INT talk_p_proc, local_var 4), and
+    the household killed the player. Out of the Heights, his hex is crossed in combat mode before any walk."""
+    calls: list = []
+    where = {"map": "HUBHEIGT"}
+    a = SimpleNamespace(mem=None, snap=lambda: SimpleNamespace(elevation=0))
+    monkeypatch.setattr(idealist_hub, "on_map", lambda actor, name: where["map"] == name)
+    monkeypatch.setattr(dialogue, "read", lambda mem: SimpleNamespace(active=False))
+    monkeypatch.setattr(idealist_hub, "past_hightower", lambda actor, free: calls.append(("past", free)) or True)
+
+    def hub_map(actor, name):
+        calls.append(("map", name))
+        where["map"] = name
+        return True
+
+    monkeypatch.setattr(idealist_hub, "hub_map", hub_map)
+    assert idealist_hub.out_of_the_heights(a, "HUBDWNTN")
+    assert calls == [("past", set(idealist_hub.FRONT_INSIDE)), ("map", "HUBDWNTN")]
