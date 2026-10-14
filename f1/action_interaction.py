@@ -180,8 +180,8 @@ class InteractionActions:
             self.companions_settle()  # opened instead (60 s in it, stuck)
         cx, cy = geometry.tile_center(tile, s.camera)
         end = time.monotonic() + timeout_s
-        if targets and self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
-            self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
+        if targets:  # a rest names only a new object: start from another
+            self.rest_off(targets)
         points = list(aims or ((0, 0), (0, -6), (0, -12), (5, -4), (-5, -4), (0, 4)))
         predicted = None
         if targets:  # f1.hit's computed point first: the hover after it confirms it
@@ -216,11 +216,11 @@ class InteractionActions:
             x, y = cx + dx, cy + dy - lift
             if targets and not (0 <= x < s.camera.view_width and 0 <= y < s.camera.view_height):
                 continue
-            if targets and self.mem.u32(LAST_OBJECT) in targets:
+            if targets:
                 # a rest names only a new object: after a click that did nothing the target is still the last one
                 # named, and every further point read 0 and was passed by: GLOW2's red lift door got one click in
                 # 10 s, and stayed shut (the chain; one aimed click by hand opened it)
-                self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
+                self.rest_off(targets)
             named = self.hovering(x, y) if targets else 0
             if targets and (x, y) == predicted:
                 self.log.emit("aim_check", what="click_object", point=[x, y], named=named, agree=named in targets)
@@ -328,12 +328,25 @@ class InteractionActions:
         self.log.emit("aim", target=address, of_kind=kind, point=a.point, pixels=a.pixels, depth=a.depth, why=a.reason)
         return a.point
 
+    def rest_off(self, targets: frozenset[int]) -> None:
+        """A rest names only a new object, so with one of `targets` named the cursor first rests on the player: on a
+        point the hit test finds on him, then above his hex. With the point above his hex alone, beside Vault 15's
+        first shaft every check read "unchanged" and the rope was never clicked (two ironman scouts, three checks
+        each try); that the shaft stayed named there is inferred, not read."""
+        if self.mem.u32(LAST_OBJECT) not in targets:
+            return
+        s = self.snap()
+        on_him = self.predict(s.dude.address)
+        above = geometry.tile_center(s.dude.tile, s.camera)
+        for x, y in [p for p in (on_him, (above[0], above[1] - 24)) if p is not None]:
+            self.hovering(x, y)
+            if self.mem.u32(LAST_OBJECT) not in targets:
+                return
+
     def confirm(self, point: tuple[int, int], targets: frozenset[int], what: str) -> int:
         """The old check after the computed point: rest the arrow cursor there and read the object the engine names
         (hovering). A disagreement is logged ("aim_check"); returns the object named (0: none or unchanged)."""
-        if self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
-            s = self.snap()
-            self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
+        self.rest_off(targets)
         named = self.hovering(*point, wait_s=0.5)
         self.log.emit("aim_check", what=what, point=list(point), named=named, agree=named in targets)
         return named
@@ -374,8 +387,7 @@ class InteractionActions:
         if not self.set_mouse_mode(MOUSE_ARROW):
             return None
         s = self.snap()
-        if self.mem.u32(LAST_OBJECT) in targets:  # a rest names only a new object: start from another
-            self.hovering(*geometry.tile_center(s.dude.tile, s.camera), dy=-24)
+        self.rest_off(targets)
         end = None if budget_s is None else time.monotonic() + budget_s
         for x, y in aim_order(spots, centre, grid, [_AIMED.get(t) for t in targets]):
             if end is not None and time.monotonic() > end:
