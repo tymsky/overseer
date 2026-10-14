@@ -9,7 +9,7 @@ import heapq
 import time
 from dataclasses import dataclass, replace
 
-from f1 import doors, geometry, state, traps, win32
+from f1 import dialogue, doors, geometry, state, traps, win32
 from f1.engine_map import Obj
 
 OBJECT_HIDDEN, OBJECT_NO_BLOCK = 0x01, 0x10
@@ -291,6 +291,17 @@ def mates_in_the_way(actor, at: int, goals: set[int], blocked: frozenset[int]) -
     return mates if mates and astar(at, goals, blocked - mates) is not None else set()
 
 
+def companion_talk(actor, s) -> bool:
+    """A companion's talk open on the walk's map: no walk asks for one, so a click meant for a door or the floor
+    landed on him. Old Town, an ironman run: a door's click opened Ian's talk, the walk ended "left the map
+    (dialogue)" and the step waited on it until the watchdog ended the run."""
+    if s.screen != "dialogue" or s.dude is None:
+        return False
+    d = dialogue.read(actor.mem)
+    mates = {c.address for c in state.critters(actor.mem) if c.team == s.dude.team and c.address != s.dude.address}
+    return d.active and d.target in mates
+
+
 def go_to(
     actor, goals: set[int], max_steps: int = 80, fight=True, avoid: frozenset[int] = frozenset()
 ) -> tuple[bool, str]:
@@ -335,8 +346,13 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
     clamped: set[int] = set()  # where Home could not centre the view (a map's edge)
     homed: set[int] = set()  # where the player was off the view and Home was pressed
     asides = 0  # steps back to let a companion out of the only way
+    closed = 0  # companions' talks a click opened, closed (by their polite exit, never "You can leave now.")
     for step in range(max_steps):
         s = actor.snap()
+        if s.map_name == start_map and closed < 3 and companion_talk(actor, s):
+            closed += 1
+            actor.log.emit("companion_talk", closed=dialogue.close(actor.mem))
+            continue
         if s.screen != "map" or s.map_name != start_map:
             return True, f"left the map ({s.screen}, {s.map_name})"
         if actor.in_combat():

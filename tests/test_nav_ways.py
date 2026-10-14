@@ -98,3 +98,34 @@ def test_a_companion_in_the_only_way_is_stepped_away_from(monkeypatch):
     assert nav.geometry.distance(aside, mate) > nav.geometry.distance(player, mate)
     ian.team = 1  # not a companion: nothing to step away from
     assert nav.mates_in_the_way(actor, player, {goal}, blocked) == set()
+
+
+def test_a_companions_talk_a_click_opened_is_closed_and_the_walk_goes_on(monkeypatch):
+    # Old Town, an ironman run: a door's click opened Ian's talk; the walk ended "left the map (dialogue)" and the
+    # step waited on the open talk until the watchdog ended the run
+    dude = SimpleNamespace(team=0, address=1, elevation=0, tile=500, dead=False)
+    ian = SimpleNamespace(team=0, address=2, elevation=0, tile=501, dead=False)
+    screen = {"now": "dialogue", "map": "HUBOLDTN.MAP"}
+    events: list = []
+    actor = SimpleNamespace(
+        mem=None,
+        snap=lambda: SimpleNamespace(screen=screen["now"], map_name=screen["map"], dude=dude),
+        log=SimpleNamespace(emit=lambda kind, **d: events.append((kind, d))),
+    )
+    talk = SimpleNamespace(active=True, target=ian.address)
+    monkeypatch.setattr(nav.state, "critters", lambda mem: [dude, ian])
+    monkeypatch.setattr(nav.dialogue, "read", lambda mem: talk)
+
+    def close(mem):
+        screen.update(now="map", map="ELSEWHERE.MAP")  # the walk's next look: it went on past the talk
+        return True
+
+    monkeypatch.setattr(nav.dialogue, "close", close)
+    _, why = nav._walk(actor, {900}, 5, True, frozenset(), [])
+    assert events == [("companion_talk", {"closed": True})]
+    assert why == "left the map (map, ELSEWHERE.MAP)"
+    # anyone else's talk is not closed: the walk stops with it open, as before
+    screen.update(now="dialogue", map="HUBOLDTN.MAP")
+    talk.target, events[:] = 77, []
+    assert nav._walk(actor, {900}, 5, True, frozenset(), [])[1] == "left the map (dialogue, HUBOLDTN.MAP)"
+    assert events == []
