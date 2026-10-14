@@ -110,3 +110,28 @@ def test_low_with_no_stimpaks_rests_until_healed() -> None:
     a = Mender(hp=15, poison=0, stimpaks=0)
     quests.mend_on_the_road(a)
     assert a.rests == ["until healed"] and a.hp == 48
+
+
+@pytest.mark.parametrize("hp,poison", [(3, 20), (5, 20), (8, 30), (1, 1)])
+def test_poison_without_medicine_refuses_lethal_rest_retries(hp, poison) -> None:
+    a = Mender(hp=hp, poison=poison, stimpaks=0)
+    assert not quests.mend_on_the_road(a)
+    assert a.rests == [] and a.hp == hp
+
+
+def test_a_rest_that_does_not_drain_poison_is_not_retried() -> None:
+    a = Mender(hp=48, poison=30)
+
+    def rest(how):
+        a.rests.append(how)
+        return SimpleNamespace(ok=True)
+
+    a.rest = rest
+    assert not quests.mend_on_the_road(a)
+    assert a.rests == [quests.POISON_REST]
+
+
+def test_healing_does_not_start_a_long_rest_during_a_poison_emergency() -> None:
+    a = Mender(hp=3, poison=20, stimpaks=0)
+    assert not quests.heal(a)
+    assert a.rests == []

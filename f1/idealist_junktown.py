@@ -76,7 +76,7 @@ def sherry_turned(actor: Actor) -> bool:
     if not on_map(actor, "JUNKKILL"):
         quests.take_exit(actor, "JUNKKILL")
     actor.holster(True)
-    for plan in (SHERRY_MEET, SHERRY_TURN, SHERRY_TURN):
+    for plan in (SHERRY_MEET, SHERRY_TURN):
         quests.talk(actor, "sherry", plan, strict=True)
         settle(actor)
         if quests.gvar(actor, "SHERRY_TURNS") >= 1:
@@ -312,6 +312,10 @@ def sherry_testimony(actor: Actor) -> bool:
     """Two days after she turned, Sherry has left the gang (SHERRY_TURNS 2) and testifies (GENERIC_FILLER_20)."""
     if quests.gvar(actor, "GENERIC_FILLER_20"):
         return True
+    if quests.gvar(actor, "SHERRY_TURNS") == 0:
+        from f1.objectives import ObjectiveOutcome
+
+        return ObjectiveOutcome.unavailable("Sherry did not turn; testimony unavailable")
     if not junktown_map(actor, "JUNKKILL"):
         return False
     for _ in range(4):
@@ -327,6 +331,10 @@ def sherry_testimony(actor: Actor) -> bool:
 
 def lars_testimony(actor: Actor) -> bool:
     """Lars takes Sherry's testimony: BUST_SKULZ 2, then 500 XP and karma +3 at his talk."""
+    if not quests.gvar(actor, "GENERIC_FILLER_20"):
+        from f1.objectives import ObjectiveOutcome
+
+        return ObjectiveOutcome.unavailable("Sherry's testimony unavailable")
     k0 = karma(actor)
     if not junktown_map(actor, "JUNKENT"):
         return False
@@ -342,8 +350,16 @@ def lars_testimony(actor: Actor) -> bool:
 IDEALIST_JUNKTOWN = [
     Step("to Junktown", lambda a: in_town(a, travel(a, "junktown", 0)), checkpoint=True, tries=6),
     Step("by day", by_day, checkpoint=True),
-    Step("Lars: the Skulz", lars_skulz),
-    Step("Sherry turned", sherry_turned, checkpoint=True, tries=5),
+    Step("Lars: the Skulz", lars_skulz, optional=True),
+    Step(
+        "Sherry turned",
+        sherry_turned,
+        checkpoint=True,
+        tries=1,
+        optional=True,
+        id="junktown.sherry-turn",
+        verify=lambda a: quests.gvar(a, "SHERRY_TURNS") >= 1,
+    ),
     Step("Killian's front door open", killians_door),
     Step("Kenji", kenji, checkpoint=True, tries=4),
     Step("Kenji's things", lambda a: quests.loot_the_dead(a, ("Kenji",)) >= 0),
@@ -370,7 +386,23 @@ IDEALIST_JUNKTOWN = [
     Step("Sinthia: the hostage talked down", the_hostage, checkpoint=True, tries=5),
     # stealing Neal's urn to give it back is +2 karma for nothing (Junktown's scripts): an exploit
     Step("Neal's urn off the bar", neals_urn, checkpoint=True, tries=1, optional=True, exploit=True),
-    Step("Sherry testifies", sherry_testimony, checkpoint=True, tries=4),
-    Step("Lars: the Skulz busted", lars_testimony, checkpoint=True, tries=4),
+    Step(
+        "Sherry testifies",
+        sherry_testimony,
+        checkpoint=True,
+        tries=1,
+        optional=True,
+        id="junktown.sherry-testimony",
+        requires=("junktown.sherry-turn",),
+        verify=lambda a: bool(quests.gvar(a, "GENERIC_FILLER_20")),
+    ),
+    Step(
+        "Lars: the Skulz busted",
+        lars_testimony,
+        checkpoint=True,
+        tries=1,
+        optional=True,
+        requires=("junktown.sherry-testimony",),
+    ),
     Step("Neal's urn returned", urn_returned, checkpoint=True, tries=4, exploit=True),
 ]

@@ -132,13 +132,30 @@ def garl_lets_her_go(actor: Actor) -> bool:
     return quests.gvar(actor, "TANDI_STATUS") == 5 and not actor.in_combat()
 
 
+def tandi_reward_received(actor: Actor) -> bool:
+    ledger = getattr(actor, "objective_progress", None) or {}
+    if any(ledger.get("statuses", {}).get(key) == "achieved" for key in ("sands.reward", "sands.reward-later")):
+        return True
+    if not on_map(actor, "SHADYW"):
+        return False
+    from f1 import scripts
+
+    who = quests.find_critter(actor, "Aradesh")
+    return who is not None and scripts.local_var(actor.mem, who.address, 8) == 1
+
+
 def tandi_reward(actor: Actor) -> bool:
     """RESCUE_TANDI turns 2 when she is home; the 500 caps come only from Aradesh's talk (checked by the caps)."""
+    if tandi_reward_received(actor):
+        return True
+    if not on_map(actor, "SHADYW") and not travel(actor, "shady sands", 0).startswith("SHADYW"):
+        return False
     caps = actor._count(PID_CAPS)
     actor.holster(True)
-    steps = quests.talk(actor, "Aradesh", ARADESH_REWARD) or []
-    paid = any(dialogue.holds(reply, "aradesh", 242) for reply, _options, _chosen in steps)
-    return actor._count(PID_CAPS) >= caps + 500 or paid
+    quests.talk(actor, "Aradesh", ARADESH_REWARD)
+    paid = actor._count(PID_CAPS) >= caps + 500 or tandi_reward_received(actor)
+    actor.log.emit("tandi_reward", paid=paid, caps_before=caps, caps_after=actor._count(PID_CAPS))
+    return paid
 
 
 TANDI = [

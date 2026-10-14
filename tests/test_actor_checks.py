@@ -110,14 +110,18 @@ def test_a_following_view_is_not_scrolled_by_arrow_keys(monkeypatch) -> None:
 
 def test_a_rest_the_place_refuses_is_told_apart_from_a_missing_button(monkeypatch) -> None:
     a = bare_actor(monkeypatch)
-    screens = ["pipboy"]
-    a.snap = lambda: SimpleNamespace(screen=screens[-1], game_time=265418)
+    screens = ["map"]
+    a.snap = lambda: SimpleNamespace(screen=screens[-1], game_time=265418, dude=SimpleNamespace(hp=20, address=1))
     a.in_combat = lambda: False
     a.mem.glob = lambda name: 1
     pressed: list = []
-    monkeypatch.setattr(
-        session, "press", lambda key, *x, **k: pressed.append(key) or (key == "esc" and screens.append("map"))
-    )
+
+    def press(key, *args, **kwargs):
+        pressed.append(key)
+        if key in {"p", "esc"}:
+            screens.append("pipboy" if key == "p" else "map")
+
+    monkeypatch.setattr(session, "press", press)
     monkeypatch.setattr(session, "click", lambda *x, **k: None)
     monkeypatch.setattr(win32, "wait_for", lambda cond, *x, **k: cond())
     clock = ui.Button(11, 0, 764, 263, 791, 286, (-1, -1, -1, 504, -1, -1))
@@ -126,7 +130,7 @@ def test_a_rest_the_place_refuses_is_told_apart_from_a_missing_button(monkeypatc
     monkeypatch.setattr(state, "live_windows", lambda mem: [(1, 16, 640, 250, 640, 480), *box])
     assert a.rest("until morning").reason == "refused here"
     box.clear()
-    screens[:] = ["pipboy"]
+    screens[:] = ["map"]
     assert a.rest("until morning").reason == "no button 518"
 
 

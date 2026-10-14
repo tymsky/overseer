@@ -18,6 +18,7 @@ from f1.agent_sands import (
     supplies,
     tandi_quest,
     tandi_reward,
+    tandi_reward_received,
 )
 from f1.barter import PID_CAPS
 from f1.idealist_support import (
@@ -271,16 +272,59 @@ def thin_the_caves(actor: Actor) -> bool:
     if left == 0:
         return True
     if why.startswith(("odds", "fled")) and left < SCORPIONS:
-        into_the_caves(actor)  # a flight out: back in for the tail
+        actor.caves_deferred = True
         actor.log.emit("caves_left", left=left, why=why)
-        return on_map(actor, "CAVES")
+        return True
     if why.startswith(("odds", "fled")):
         # the gate refused the first one too (an ironman run: 28 % to hit in the dark at 9 hexes, a death bound of
         # 0.97; the retry met the same numbers and the run stopped for no progress): all nine wait for the second
         # visit, and with no tail the antidote and Jarvis wait with them (razlo_antidote, antidote_later)
+        actor.caves_deferred = True
         actor.log.emit("caves_left", left=left, why=why)
         return True
     return False
+
+
+def first_cave_outcome(actor: Actor):
+    from f1.objectives import ObjectiveOutcome
+
+    ok = thin_the_caves(actor)
+    left = quests.gvar(actor, GVAR_NUM_RADSCORPIONS)
+    if ok and left:
+        return ObjectiveOutcome.deferred(f"{left} radscorpions await preparation and the second visit", "sands.caves")
+    return ok
+
+
+def remaining_cave_outcome(actor: Actor):
+    from f1.objectives import ObjectiveOutcome
+
+    if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0:
+        actor.caves_deferred = False
+        return ObjectiveOutcome.achieved(resolves=("sands.caves",))
+    if not on_map(actor, "CAVES"):
+        return ObjectiveOutcome.recoverable("remaining caves were not reached")
+    ok = the_rest_of_the_caves(actor)
+    if ok:
+        actor.caves_deferred = False
+        return ObjectiveOutcome.achieved(resolves=("sands.caves",))
+    return ObjectiveOutcome.deferred("remaining caves still require preparation", "sands.caves")
+
+
+def antidote_outcome(actor: Actor):
+    from f1.objectives import ObjectiveOutcome
+
+    ok = razlo_antidote(actor)
+    if ok and actor.antidote_later:
+        return ObjectiveOutcome.deferred("a tail is still needed", "sands.antidote")
+    return ok
+
+
+def jarvis_outcome(actor: Actor):
+    from f1.objectives import ObjectiveOutcome
+
+    if actor.antidote_later and not actor._count(PID_ANTIDOTE):
+        return ObjectiveOutcome.deferred("antidote not yet available", "sands.jarvis")
+    return jarvis(actor)
 
 
 def nest_if_cleared(actor: Actor) -> bool:
@@ -304,6 +348,10 @@ def scorpion_tail(actor: Actor) -> bool:
     began after the hunt (on the sweep for the floor's loot) and the gate refused was fled out: back in first. When
     the way to a body still meets a fight the gate refuses (an ironman run fled twice), the tail, Razlo's antidote and
     Jarvis wait for the second visit (antidote_later)."""
+    if not actor._count(PID_SCORPION_TAIL) and getattr(actor, "caves_deferred", False):
+        from f1.objectives import ObjectiveOutcome
+
+        return ObjectiveOutcome.deferred("tail pickup awaits a safe cave visit", "sands.tail")
     if not actor._count(PID_SCORPION_TAIL):
         if not on_map(actor, "CAVES"):
             into_the_caves(actor)
@@ -328,7 +376,7 @@ def razlo_antidote(actor: Actor) -> bool:
 
 def jarvis(actor: Actor) -> bool:
     """The Antidote used on Jarvis, lying ill: 400 XP and karma +1 (JARVIS.INT use_obj_on_p_proc)."""
-    k0, count0 = karma(actor), actor._count(PID_ANTIDOTE)
+    k0, count0, xp0 = karma(actor), actor._count(PID_ANTIDOTE), experience(actor)
     if not count0:
         return actor.antidote_later
     target = quests.find_critter(actor, "jarvis", JARVIS_BED)
@@ -337,16 +385,22 @@ def jarvis(actor: Actor) -> bool:
     # He lies in bed: a click above his hex named the Rug and the Curtain (three tries); aim where the
     # engine names him.
     beside(actor, target.tile)
-    done = lambda: actor._count(PID_ANTIDOTE) < count0
+    done = lambda: karma(actor) > k0 and experience(actor) >= xp0 + 400
     actor.use_item_on(PID_ANTIDOTE, target.tile, done, targets=frozenset({target.address}))
-    return karma(actor) > k0
+    return karma(actor) > k0 and experience(actor) >= xp0 + 400
 
 
 def tail_on_the_second_visit(actor: Actor) -> bool:
-    if not actor.antidote_later or actor._count(PID_SCORPION_TAIL) or not on_map(actor, "CAVES"):
+    if not actor.antidote_later or actor._count(PID_SCORPION_TAIL):
         return True
+    if not on_map(actor, "CAVES") or getattr(actor, "caves_deferred", False):
+        from f1.objectives import ObjectiveOutcome
+
+        return ObjectiveOutcome.deferred("tail pickup awaits a safe cave visit", "sands.tail")
     quests.loot_the_dead(actor, ("Radscorpion",), max_bodies=1)
-    return actor._count(PID_SCORPION_TAIL) > 0
+    from f1.objectives import ObjectiveOutcome
+
+    return ObjectiveOutcome.achieved(resolves=("sands.tail",)) if actor._count(PID_SCORPION_TAIL) > 0 else False
 
 
 def antidote_later(actor: Actor) -> bool:
@@ -361,6 +415,15 @@ def antidote_later(actor: Actor) -> bool:
     if ok:
         actor.antidote_later = False
     return ok
+
+
+def late_antidote_outcome(actor: Actor):
+    from f1.objectives import ObjectiveOutcome
+
+    ok = antidote_later(actor)
+    if actor.antidote_later:
+        return ObjectiveOutcome.deferred("tail or antidote still unavailable", "sands.antidote")
+    return ObjectiveOutcome.achieved(resolves=("sands.antidote", "sands.jarvis")) if ok else False
 
 
 def curtis(actor: Actor) -> bool:
@@ -424,9 +487,21 @@ def tandi_due(actor: Actor) -> bool:
     return False
 
 
-def now_or_later(fn):
+def now_or_later(fn, *, reward: bool = False):
     """A step of Tandi's on the first pass: skipped once tandi_due put her off."""
-    return lambda actor: actor.tandi_later or fn(actor)
+
+    def run(actor):
+        from f1.objectives import ObjectiveOutcome
+
+        if quests.gvar(actor, "TANDI_STATUS") == 2:
+            if reward:
+                return fn(actor)
+            return ObjectiveOutcome.achieved(resolves=("sands.tandi",))
+        if quests.gvar(actor, GVAR_RADSCORPION_SEED) != 2:
+            return ObjectiveOutcome.deferred("caves must be resolved before Tandi's route", "sands.tandi")
+        return fn(actor)
+
+    return run
 
 
 def after_the_caves(fn, last: bool = False):
@@ -434,14 +509,27 @@ def after_the_caves(fn, last: bool = False):
     (fights refused, no dynamite) and she stays home: logged, nothing to do."""
 
     def step(actor: Actor) -> bool:
-        if not actor.tandi_later:
-            return True
+        if quests.gvar(actor, "TANDI_STATUS") == 2:
+            from f1.objectives import ObjectiveOutcome
+
+            if last:
+                return ObjectiveOutcome.achieved(resolves=("sands.tandi", "sands.tandi-reward")) if fn(actor) else False
+            return ObjectiveOutcome.achieved(resolves=("sands.tandi",))
         if quests.gvar(actor, GVAR_RADSCORPION_SEED) != 2:
             actor.log.emit("tandi_never", radscorpions=quests.gvar(actor, GVAR_NUM_RADSCORPIONS))
-            return True
+            from f1.objectives import ObjectiveOutcome
+
+            return ObjectiveOutcome.deferred("Tandi's prerequisite still incomplete", "sands.tandi")
         ok = fn(actor)
-        if ok and last:
+        if ok and last and quests.gvar(actor, "TANDI_STATUS") == 2:
             actor.tandi_later = False
+            from f1.objectives import ObjectiveOutcome
+
+            return ObjectiveOutcome.achieved(resolves=("sands.tandi", "sands.tandi-reward"))
+        if ok and last:
+            from f1.objectives import ObjectiveOutcome
+
+            return ObjectiveOutcome.deferred("Tandi has not returned home", "sands.tandi")
         return ok
 
     return step
@@ -599,13 +687,21 @@ IDEALIST_START = [
     Step("Ian joins", ian, checkpoint=True, tries=1, optional=True),
     Step("Seth: to the caves", seth_to_the_caves, checkpoint=True),
     Step("the caves' floor: rounds and a stimpak", the_floor),
-    Step("the radscorpions", thin_the_caves, checkpoint=True, tries=6),
+    Step(
+        "the radscorpions",
+        first_cave_outcome,
+        checkpoint=True,
+        tries=6,
+        id="sands.first-caves",
+        obligation="sands.caves",
+        verify=lambda a: quests.gvar(a, GVAR_NUM_RADSCORPIONS) == 0,
+    ),
     Step("a Scorpion Tail", scorpion_tail, optional=True, tries=2),
     Step("out of the caves", lambda a: quests.leave_map(a)),
     Step("back to Shady Sands", lambda a: travel(a, "shady sands", 0).startswith("SHADY"), checkpoint=True, tries=6),
     Step("Aradesh: the nest destroyed", nest_if_cleared),
-    Step("Razlo's antidote", razlo_antidote, checkpoint=True),
-    Step("Jarvis cured", jarvis, checkpoint=True),
+    Step("Razlo's antidote", antidote_outcome, checkpoint=True, optional=True),
+    Step("Jarvis cured", jarvis_outcome, checkpoint=True, optional=True),
     Step("to Shady Sands East", lambda a: quests.take_exit(a, "SHADYE")),
     # a Science check (the option shows only above its bound): on Hard, -10 to every non-combat skill, it did not show
     Step("Curtis's crop rotation", curtis, checkpoint=True, tries=1, optional=True),
@@ -613,7 +709,19 @@ IDEALIST_START = [
     # the days away that SHADYWST.INT wants before it takes Tandi are rested out: Vault 15 waits until after Junktown
     # (at level 2 its radscorpions came over the risk bound in the burrows, where no exit grid offers a way out)
     Step("the raiders' cue: the radscorpions done", lambda a: tandi_due(a) or True),
-    *[Step(s.name, now_or_later(s.run), checkpoint=s.checkpoint, tries=s.tries) for s in TANDI],
+    *[
+        Step(
+            s.name,
+            now_or_later(s.run, reward=i == len(TANDI) - 1),
+            checkpoint=s.checkpoint,
+            tries=s.tries,
+            id="sands.reward" if i == len(TANDI) - 1 else "",
+            obligation="sands.tandi-reward" if i == len(TANDI) - 1 else "sands.tandi",
+            verify=tandi_reward_received if i == len(TANDI) - 1 else None,
+            satisfied=tandi_reward_received if i == len(TANDI) - 1 else lambda a: quests.gvar(a, "TANDI_STATUS") == 2,
+        )
+        for i, s in enumerate(TANDI)
+    ],
 ]
 
 IDEALIST_VAULT15 = [
@@ -621,12 +729,21 @@ IDEALIST_VAULT15 = [
     Step("back to Shady Sands", lambda a: travel(a, "shady sands", 0).startswith("SHADY"), checkpoint=True, tries=6),
     # after Tandi is home: while she is gone Seth talks only of her (SETH.INT TanSeth), no trip to the caves
     Step("Seth: back to the caves (the dynamite)", back_to_the_caves, checkpoint=True),
-    Step("the radscorpions left", the_rest_of_the_caves, checkpoint=True, tries=3, optional=True),
+    Step(
+        "the radscorpions left",
+        remaining_cave_outcome,
+        checkpoint=True,
+        tries=3,
+        id="sands.remaining-caves",
+        obligation="sands.caves",
+        resolves=("sands.caves",),
+        verify=lambda a: quests.gvar(a, GVAR_NUM_RADSCORPIONS) == 0,
+    ),
     Step("a Scorpion Tail, if the first visit left none", tail_on_the_second_visit, optional=True, tries=2),
     # a Traps roll arms it: its outcome stands (no reloading for luck)
     Step("the cave wall blown", the_cave_wall, checkpoint=True, tries=1, optional=True),
     Step("out of the caves again", lambda a: not on_map(a, "CAVES") or quests.leave_map(a)),
-    Step("Razlo's antidote and Jarvis, if they waited", antidote_later, checkpoint=True, optional=True, tries=2),
+    Step("Razlo's antidote and Jarvis, if they waited", late_antidote_outcome, checkpoint=True, optional=True, tries=2),
     Step(
         "to Shady Sands East, if Tandi waited",
         after_the_caves(lambda a: travel(a, "shady sands", 1).startswith("SHADYE")),
@@ -639,6 +756,11 @@ IDEALIST_VAULT15 = [
             after_the_caves(s.run, last=i == len(TANDI) - 1),
             checkpoint=s.checkpoint,
             tries=s.tries,
+            id="sands.reward-later" if i == len(TANDI) - 1 else "",
+            obligation="sands.tandi-reward" if i == len(TANDI) - 1 else "sands.tandi",
+            verify=tandi_reward_received if i == len(TANDI) - 1 else None,
+            satisfied=tandi_reward_received if i == len(TANDI) - 1 else lambda a: quests.gvar(a, "TANDI_STATUS") == 2,
+            resolves=("sands.tandi",) if i == len(TANDI) - 1 else (),
         )
         for i, s in enumerate(TANDI)
     ],

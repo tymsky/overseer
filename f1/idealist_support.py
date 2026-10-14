@@ -38,14 +38,20 @@ def scripted(actor: Actor, tile: int, script: str) -> frozenset[int]:
     )
 
 
-def take_from(tile: int) -> Callable[[Actor], bool]:
+def take_from(tile: int, *, pid: int | None = None, minimum: int = 1) -> Callable[[Actor], bool]:
     """A step's run: the free container or item on `tile` (f1.atlas) taken, on a path out of the foes' notice. Done
     too when it is gone already (taken before, or never there)."""
 
     def run(actor: Actor) -> bool:
+        before = actor._count(pid) if pid is not None else None
+        if pid is not None and before >= minimum:
+            return True
         f = next((f for f in loot.finds(actor, town_containers=True) if f.tile == tile), None)
         got = "none there" if f is None else loot.take(actor, f, loot.danger(actor))
-        actor.log.emit("take_from", tile=tile, got=got)
+        after = actor._count(pid) if pid is not None else None
+        actor.log.emit("take_from", tile=tile, got=got, required_pid=pid, count_before=before, count_after=after)
+        if pid is not None:
+            return after >= minimum
         return f is None or got == loot.TAKEN
 
     return run

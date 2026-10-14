@@ -76,6 +76,15 @@ def the_master(actor: Actor) -> bool:
     (240 game seconds). A failed last roll (master17_1) is a fight with the Master: the runner's load after a death."""
     if quests.gvar(actor, "MASTER_BLOWN") == 1:
         return True
+    if getattr(actor, "ironman", False):
+        from f1 import ending_goals
+        from f1.objectives import ObjectiveOutcome
+
+        actor.pre_final_audit = ending_goals.audit(actor, final=False)
+        if not actor.pre_final_audit["ok"]:
+            return ObjectiveOutcome.unavailable(
+                "ending requirements missing before final progression: " + ", ".join(actor.pre_final_audit["missing"])
+            )
     xp0, k0 = experience(actor), karma(actor)
     quests.talk(actor, "morph", MORPHEUS_TAKE_ME + MASTER_TALK, strict=True)
     actor.log.emit(

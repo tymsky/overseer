@@ -9,7 +9,8 @@ import heapq
 import time
 from dataclasses import dataclass, replace
 
-from f1 import dialogue, doors, geometry, state, traps, win32
+from f1 import dialogue, doors, geometry, knowledge, state, traps, win32
+from f1.action_shared import alive
 from f1.engine_map import Obj
 
 OBJECT_HIDDEN, OBJECT_NO_BLOCK = 0x01, 0x10
@@ -158,12 +159,25 @@ def _door_object(actor, tile: int, elevation: int) -> int | None:
 def open_door(actor, tile: int) -> bool:
     """Arrow-click a closed door on `tile`; True once it no longer blocks (OBJECT_NO_BLOCK), as measured."""
 
-    def is_open() -> bool:
-        s = actor.snap()
-        return tile not in obstacles(actor.mem, s.elevation, s.dude.address).doors
-
     actor.log.emit("action_start", action="open_door", tile=tile)
     s = actor.snap()
+    if not alive(s) or s.screen != "map":
+        return actor._end(False, "not on a living map", {"tile": tile}, "open_door").ok
+    start = (s.map_name, s.elevation)
+    door = _door_object(actor, tile, s.elevation)
+    if door is None:
+        return actor._end(False, "no door here", {"tile": tile}, "open_door").ok
+
+    def is_open() -> bool:
+        now = actor.snap()
+        return bool(
+            alive(now)
+            and now.screen == "map"
+            and (now.map_name, now.elevation) == start
+            and _door_object(actor, tile, now.elevation) == door
+            and tile not in obstacles(actor.mem, now.elevation, now.dude.address).doors
+        )
+
     if tile in obstacles(actor.mem, s.elevation, s.dude.address).locked:
         # its lock bit is set: one use (a script may open it: a code, a key), not 16 s of clicks (MBVATS12's cell)
         ok = actor.click_object(tile, is_open, 4, aims=DOOR_AIMS[:2]) or is_open()
@@ -172,16 +186,12 @@ def open_door(actor, tile: int) -> bool:
     # a door opens late when the player walks round to its far side first (the Brotherhood's 17120 read "locked"
     # and stood open a moment later, live): a last look before calling it shut. Clicked where the cursor
     # names the door: Talus stands before BROHD12's 21080, and every blind click there opened his talk (live)
-    door = _door_object(actor, tile, s.elevation)
-    targets = frozenset({door}) if door else frozenset()
+    targets = frozenset({door})
     ok = actor.click_object(tile, is_open, 10, aims=DOOR_AIMS, targets=targets) or win32.wait_for(is_open, 4, 0.2)
-    if not ok and targets and actor.snap().screen == "dialogue":
+    if not ok and recover_companion_dialogue(actor, start):
         # a talk opened by a click meant for the door: blind clicks then. Not otherwise: a blind click acts on what
         # the hover named there, and Old Town's doors under a roof (gmouse.c object_under_mouse names nothing under
         # one) took 10 s more of them each, 26 s a door (the Hub)
-        from f1 import dialogue
-
-        dialogue.close(actor.mem)
         ok = actor.click_object(tile, is_open, 6, aims=DOOR_AIMS) or win32.wait_for(is_open, 4, 0.2)
     actor.set_mouse_mode(0)
     return actor._end(ok, "open" if ok else "still closed (locked?)", {"tile": tile}, "open_door").ok
@@ -291,6 +301,44 @@ def mates_in_the_way(actor, at: int, goals: set[int], blocked: frozenset[int]) -
     return mates if mates and astar(at, goals, blocked - mates) is not None else set()
 
 
+def crowd_in_the_way(at: int, goals: set[int], blocked: frozenset[int], critters: frozenset[int]) -> set[int]:
+    """Actual blocking body hexes on a path that is otherwise open, including actors outside the player's team."""
+    path = astar(at, goals, blocked - critters) if critters else None
+    return set(path or ()) & critters
+
+
+def blocked_details(actor, s, obs: Obstacles, goals: set[int], blocked: frozenset[int]) -> dict:
+    """Record the actual crowd separately from permanent obstacles and a wrong-map arrival."""
+    path = astar(s.dude.tile, goals, blocked - obs.critters)
+    body_tiles = set(path or ()) & obs.critters
+    actors = []
+    for critter in state.critters(actor.mem):
+        if critter.address == s.dude.address or critter.dead or critter.elevation != s.elevation:
+            continue
+        body = (
+            {critter.tile, *geometry.ring(critter.tile, 1)} if getattr(critter, "multihex", False) else {critter.tile}
+        )
+        if body & body_tiles:
+            actors.append(
+                {
+                    "address": critter.address,
+                    "tile": critter.tile,
+                    "team": critter.team,
+                    "hp": getattr(critter, "hp", None),
+                }
+            )
+    return {
+        "map": s.map_name,
+        "elevation": s.elevation,
+        "at": s.dude.tile,
+        "goals": sorted(goals)[:12],
+        "path_without_actors": len(path) - 1 if path is not None else None,
+        "blockers": sorted(body_tiles),
+        "actors": actors,
+        "blocked_hexes": len(blocked),
+    }
+
+
 def companion_talk(actor, s) -> bool:
     """A companion's talk open on the walk's map: no walk asks for one, so a click meant for a door or the floor
     landed on him. Old Town, an ironman run: a door's click opened Ian's talk, the walk ended "left the map
@@ -298,14 +346,65 @@ def companion_talk(actor, s) -> bool:
     if s.screen != "dialogue" or s.dude is None:
         return False
     d = dialogue.read(actor.mem)
-    mates = {c.address for c in state.critters(actor.mem) if c.team == s.dude.team and c.address != s.dude.address}
+    mates = {
+        c.address
+        for c in state.critters(actor.mem)
+        if c.team == s.dude.team and c.address != s.dude.address and not c.dead
+    }
     return d.active and d.target in mates
+
+
+def recover_companion_dialogue(actor, start: tuple[str, int]) -> bool:
+    """Close an intercepted companion talk, then verify the original playable map."""
+    s = actor.snap()
+    if not alive(s) or (s.map_name, s.elevation) != start or not companion_talk(actor, s):
+        return False
+    closed = False
+    for _ in range(2):
+        d = dialogue.read(actor.mem)
+        if not d.active:
+            closed = True
+            break
+        choice = 0 if getattr(d, "is_line", False) else dialogue.leave(d.options)
+        if choice is None:
+            break
+        dialogue.choose(actor.mem, choice)
+        if win32.wait_for(lambda: actor.snap().screen != "dialogue", 2, 0.1):
+            closed = True
+            break
+    now = actor.snap()
+    ok = (
+        closed
+        and alive(now)
+        and now.screen == "map"
+        and (now.map_name, now.elevation) == start
+        and not actor.in_combat()
+    )
+    actor.log.emit("companion_talk", closed=bool(ok))
+    return bool(ok)
+
+
+def exit_arrival(actor, s, exits: dict[int, tuple[int, int, int]]) -> bool:
+    """A living, non-combat arrival at one of the requested exit destinations."""
+    if not alive(s) or actor.in_combat():
+        return False
+    for to_map, _tile, elevation in exits.values():
+        if to_map < 0 and s.screen == "worldmap":
+            return True
+        if (
+            to_map >= 0
+            and s.screen == "map"
+            and s.map_name.split(".")[0] == knowledge.map_name(to_map).split(".")[0]
+            and s.elevation == elevation
+        ):
+            return True
+    return False
 
 
 def go_to(
     actor, goals: set[int], max_steps: int = 80, fight=True, avoid: frozenset[int] = frozenset()
 ) -> tuple[bool, str]:
-    """Walk the player to any of `goals` on this map. Returns (reached, why). An exit grid ends the map: reached.
+    """Walk to `goals` on this elevation, or verify a requested exit grid's destination. Returns (reached, why).
     `avoid` holds hexes the path must not cross (a radiation hot spot and a margin round it): planned around like
     walls, and walked in short steps, as the engine finds its own way between two points of ours. The armed traps'
     areas (f1.traps) are added on every step and kept off the same way, each leg short enough that no shortest way
@@ -317,9 +416,13 @@ def go_to(
     from f1 import ways
 
     s = actor.snap()
+    if not alive(s) or s.screen not in {"map", "dialogue"}:
+        why = "not on a living map"
+        actor.log.emit("action_end", action="go_to", ok=False, reason=why)
+        return False, why
     for w in doors.WALLS.give_back(actor.mem, s.map_name):
         actor.log.emit("milestone", what="a door given back", tile=w.tile, by=w.by)
-    exits = obstacles(actor.mem, s.elevation, s.dude.address).exits if s.dude else {}
+    exits = obstacles(actor.mem, s.elevation, s.dude.address).exits if alive(s) and s.screen == "map" else {}
     if goals and set(goals) <= set(exits):
         avoid = avoid | (ways.exit_walls(exits, {exits[g][0] for g in goals}) - set(goals))
     actor.log.emit(
@@ -340,7 +443,10 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
     """go_to's walk; `plan` gets the first path's length in hexes."""
     reach = 4 if avoid else 16
     caller_avoid, through_trap = avoid, False
-    start_map = actor.snap().map_name
+    initial = actor.snap()
+    start_map, start_elevation = initial.map_name, initial.elevation
+    expected_exits: dict[int, tuple[int, int, int]] = {}
+    exits_read, exit_waits = False, 0
     refused: set[int] = set()  # tiles the engine would not walk to (twice from the same place): planned around
     misses: dict[tuple[int, int], int] = {}
     clamped: set[int] = set()  # where Home could not centre the view (a map's edge)
@@ -349,20 +455,46 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
     closed = 0  # companions' talks a click opened, closed (by their polite exit, never "You can leave now.")
     for step in range(max_steps):
         s = actor.snap()
+        if not alive(s):
+            return False, "died or no living player"
         if s.map_name == start_map and closed < 3 and companion_talk(actor, s):
             closed += 1
-            actor.log.emit("companion_talk", closed=dialogue.close(actor.mem))
+            if not recover_companion_dialogue(actor, (start_map, start_elevation)):
+                return False, "companion dialogue did not close"
             continue
-        if s.screen != "map" or s.map_name != start_map:
-            return True, f"left the map ({s.screen}, {s.map_name})"
+        if s.screen != "map" or (s.map_name, s.elevation) != (start_map, start_elevation):
+            ok = exit_arrival(actor, s, expected_exits)
+            return ok, f"{'arrived by exit' if ok else 'unexpected state'} ({s.screen}, {s.map_name})"
+        if not exits_read:
+            expected_exits = {
+                t: dest for t, dest in obstacles(actor.mem, s.elevation, s.dude.address).exits.items() if t in goals
+            }
+            exits_read = True
         if actor.in_combat():
             if not fight:
                 return False, "combat"
             out = actor.fight(forced=True)  # a foe began it: weighed before it is fought
             if not out.ok:
                 return False, f"fight: {out.reason}"
+            from f1 import quests
+
+            if not quests.prepare_after_fight(actor):
+                return False, "fight: unsafe to continue"
             continue
         if s.dude.tile in goals:
+            if s.dude.tile in expected_exits:
+                if exit_waits >= 2:
+                    return False, "exit did not transition"
+                exit_waits += 1
+                win32.wait_for(
+                    lambda: (
+                        actor.snap().screen != "map"
+                        or (actor.snap().map_name, actor.snap().elevation) != (start_map, start_elevation)
+                    ),
+                    3,
+                    0.1,
+                )
+                continue
             return True, "arrived"
         walls = doors.WALLS.on(s.map_name, s.elevation)
         obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
@@ -387,8 +519,33 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         if path is None:  # once right after saving it failed and a second later it did not: look again
             time.sleep(1.0)
             s = actor.snap()
+            if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != (start_map, start_elevation):
+                continue
+            if actor.in_combat():
+                continue
             obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
             path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
+        if path is None and asides < 2:
+            blockers = mates_in_the_way(
+                actor, s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid
+            )
+            blockers = blockers or crowd_in_the_way(
+                s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid, obs.critters
+            )
+            if blockers:
+                actor.log.emit(
+                    "navigation_blocked",
+                    **blocked_details(actor, s, obs, goals - refused or goals, obs.passable_doors | refused | avoid),
+                    recovering=True,
+                )
+                asides += 1
+                aside = aside_tile(s.dude.tile, blockers, obs.blocked | refused | avoid | set(obs.exits))
+                actor.log.emit("make_way", at=s.dude.tile, blockers=sorted(blockers), to=aside)
+                if aside is not None:
+                    moved = actor.walk_to(aside, timeout_s=10)
+                    if moved.ok and alive(actor.snap()) and actor.snap().dude.tile == aside:
+                        actor.companions_settle(4.0)
+                    continue
         # someone stands in the only way (after a reload, again and again: the same save, the same place; the rope in
         # Shady Sands East failed four tries, a full run at Full HD, and 75 s later the way was free): they
         # wander on, wait for it
@@ -400,10 +557,18 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
                 break
             time.sleep(2.0)
             s = actor.snap()
+            if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != (start_map, start_elevation):
+                break
+            if actor.in_combat():
+                break
             obs = obstacles(actor.mem, s.elevation, s.dude.address, walls)
             path = astar(s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
             if path is not None:
                 break
+        if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != (start_map, start_elevation):
+            continue
+        if actor.in_combat():
+            continue
         mates: set[int] = set()
         if path is None and asides < 2:
             mates = mates_in_the_way(actor, s.dude.tile, goals - refused or goals, obs.passable_doors | refused | avoid)
@@ -411,19 +576,36 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
             # a companion stands in the only way and waits there for the player (Ian in a doorway of the Watershed,
             # an ironman run: no path for 60 s, the run stopped): step back from him, he follows out of it
             asides += 1
-            aside = aside_tile(s.dude.tile, mates, obs.passable_doors | refused | avoid)
+            aside = aside_tile(s.dude.tile, mates, obs.blocked | refused | avoid | set(obs.exits))
             actor.log.emit("make_way", at=s.dude.tile, mates=sorted(mates), to=aside)
             if aside is not None:
-                actor.walk_to(aside, timeout_s=10)
-                actor.companions_settle(4.0)
+                moved = actor.walk_to(aside, timeout_s=10)
+                if moved.ok and alive(actor.snap()) and actor.snap().dude.tile == aside:
+                    actor.companions_settle(4.0)
                 continue
         if path is None:
+            actor.log.emit(
+                "navigation_blocked",
+                **blocked_details(actor, s, obs, goals - refused or goals, obs.passable_doors | refused | avoid),
+                recovering=False,
+                avoided=len(avoid),
+                asides=asides,
+            )
             return False, "no path"
         if not plan:
             plan.append(len(path) - 1)
         door = next((k for k, t in enumerate(path[1:], start=1) if t in obs.doors), None)
         if door == 1:  # a closed door right ahead: open it (its default action), then look again
             if not open_door(actor, path[1]):
+                now = actor.snap()
+                if (
+                    not alive(now)
+                    or now.screen != "map"
+                    or (now.map_name, now.elevation) != (start_map, start_elevation)
+                ):
+                    return False, "door interaction interrupted"
+                if actor.in_combat():
+                    continue
                 refused.add(path[1])  # locked (the Brotherhood's 16318, live): plan round it; fail only without a way
                 doors.WALLS.wall(s.map_name, s.elevation, path[1], "did not open")  # for later walks: till unlocked
                 if (
@@ -493,9 +675,9 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         # the vats' explosion movie on the world map, live). Only a step that got there: a refused
         # exit hex must still count its misses (MOUNTN2's 17715: 541 walks in ten minutes, a full run)
         leaving = after.screen != "map" or after.map_name != start_map or (out.ok and path[i] in obs.exits)
-        if final and not leaving and (out.ok or after.dude.tile != before):
+        if final and not leaving and alive(after) and (out.ok or after.dude.tile != before):
             keep_centred(actor, clamped)
-        if not out.ok and out.reason == "did not arrive" and actor.snap().dude.tile == before:
+        if not out.ok and out.reason == "did not arrive" and alive(after) and after.dude.tile == before:
             misses[(before, path[i])] = misses.get((before, path[i]), 0) + 1
             if misses[(before, path[i])] >= 2:  # MOUNTN2: one hex the engine never walked to, retried for minutes
                 refused.add(path[i])
@@ -505,4 +687,18 @@ def _walk(actor, goals: set[int], max_steps: int, fight, avoid: frozenset[int], 
         out = actor.fight(forced=True)
         if not out.ok:
             return False, f"fight: {out.reason}"
+        from f1 import quests
+
+        if not quests.prepare_after_fight(actor):
+            return False, "fight: unsafe to continue"
+    s = actor.snap()
+    if not alive(s):
+        return False, "died or no living player"
+    if exit_arrival(actor, s, expected_exits):
+        return True, "arrived by exit"
+    if s.screen == "map" and (s.map_name, s.elevation) == (start_map, start_elevation) and s.dude.tile in goals:
+        return (
+            s.dude.tile not in expected_exits,
+            "arrived" if s.dude.tile not in expected_exits else "exit did not transition",
+        )
     return False, "too many steps"

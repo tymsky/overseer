@@ -222,6 +222,14 @@ def the_ending(actor: Actor, limit_s: float | None = None) -> bool:
     from f1 import actions
 
     limit_s = limit_s or (900 if actions.SKIP_CINEMA else 2400)
+    from f1 import ending_goals
+
+    if getattr(actor, "ironman", False):
+        actor.ending_audit = ending_goals.audit(actor)
+        if not actor.ending_audit["ok"]:
+            from f1.objectives import ObjectiveOutcome
+
+            return ObjectiveOutcome.unavailable("ending requirements lost: " + ", ".join(actor.ending_audit["missing"]))
     end, last, seen_ending = time.monotonic() + limit_s, None, False
     while time.monotonic() < end:
         try:
@@ -232,8 +240,12 @@ def the_ending(actor: Actor, limit_s: float | None = None) -> bool:
         if (s.screen, s.map_name) != last:
             last = (s.screen, s.map_name)
             actor.log.emit("ending", screen=s.screen, map=s.map_name, xp=s.experience, level=s.level)
-        seen_ending = seen_ending or s.screen == "endgame" or "V13ENT" in s.map_name
+        seen_ending = seen_ending or s.screen == "endgame"
         if s.screen == "main_menu":
+            if getattr(actor, "ironman", False):
+                actor.ending_audit["ending_seen"] = seen_ending
+                actor.ending_audit["ok"] = actor.ending_audit["ok"] and seen_ending
+                actor.log.emit("ending_evidence", ending_seen=seen_ending, goal_ok=actor.ending_audit["ok"])
             return seen_ending
         if actor.skip_cinema():
             continue

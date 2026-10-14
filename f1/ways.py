@@ -30,6 +30,7 @@ from functools import cache
 from pathlib import Path
 
 from f1 import doors, geometry, knowledge
+from f1.action_shared import alive
 
 TILE_MASK = 0x3FFFFFF
 ELEVATOR_VA, KEYTABLE_VA = 0x437C1C, 0x437E5C  # retvals, keytable (elevator.cc; the exe's bytes read)
@@ -314,12 +315,42 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
     from f1 import nav
 
     walls = walls or doors.WALLS
-    opened, walled = [], []
+    opened, walled, asides = [], [], 0
+    initial = actor.snap()
+    start = (initial.map_name, initial.elevation)
     for _ in range(DOORS_ON_A_WAY):
         s = actor.snap()
+        if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != start or actor.in_combat():
+            return Result(False, "not on a safe map", {"opened": opened, "walled": walled})
         for w in walls.give_back(actor.mem, s.map_name):
             (log or actor.log.emit)("milestone", what="a door given back", tile=w.tile, by=w.by)
         path, shut = door_way(actor, goal, walls, log)
+        if path is None and asides < 2:
+            obs = nav.obstacles(actor.mem, s.elevation, s.dude.address, walls.on(s.map_name, s.elevation))
+            avoid = set(obs.exits) - {goal}
+            mates = nav.mates_in_the_way(actor, s.dude.tile, {goal}, obs.passable_doors | avoid)
+            mates = mates or nav.crowd_in_the_way(s.dude.tile, {goal}, obs.passable_doors | avoid, obs.critters)
+            if mates:
+                actor.log.emit(
+                    "navigation_blocked",
+                    **nav.blocked_details(actor, s, obs, {goal}, obs.passable_doors | avoid),
+                    recovering=True,
+                )
+                aside = nav.aside_tile(
+                    s.dude.tile, mates, obs.blocked | set(obs.exits) | nav.trap_tiles(actor, s.elevation)
+                )
+                asides += 1
+                actor.log.emit("make_way", at=s.dude.tile, mates=sorted(mates), to=aside)
+                if aside is not None and actor.walk_to(aside, timeout_s=10).ok:
+                    now = actor.snap()
+                    if (
+                        alive(now)
+                        and now.screen == "map"
+                        and (now.map_name, now.elevation) == (s.map_name, s.elevation)
+                        and now.dude.tile == aside
+                    ):
+                        actor.companions_settle(4.0)
+                        continue
         if path is None and open_way(actor, goal, walls):
             # the engine's search stops at 2000 nodes: from Shady Sands West's east edge to its exit 7106 a walk round
             # the walls is longer (an ironman run stood there, the way refused twice); nav.go_to walks it in legs
@@ -331,6 +362,14 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
             # villager by the inner doorway; the step and its retry failed within 1.2 s and the run counted as
             # stuck, while from the same tile another run walked out): they wander on, wait for it
             time.sleep(2.0)
+            now = actor.snap()
+            if (
+                not alive(now)
+                or now.screen != "map"
+                or (now.map_name, now.elevation) != (s.map_name, s.elevation)
+                or actor.in_combat()
+            ):
+                return Result(False, "passage recovery interrupted", {"opened": opened, "walled": walled})
             path, shut = door_way(actor, goal, walls, log)
             if path is not None or open_way(actor, goal, walls):
                 (log or actor.log.emit)("milestone", what="the way cleared", tile=actor.snap().dude.tile)
@@ -346,7 +385,9 @@ def open_doors(actor, goal: int, walls: doors.Walls | None = None, log=None) -> 
         door = shut[0]
         before = path[path.index(door) - 1] if path.index(door) > 0 else s.dude.tile
         if before != s.dude.tile:
-            nav.go_to(actor, {before}, max_steps=60, fight=True, avoid=_keep_off(walls, s))
+            reached, why = nav.go_to(actor, {before}, max_steps=60, fight=True, avoid=_keep_off(walls, s))
+            if not reached:
+                return Result(False, f"could not approach door: {why}", {"opened": opened, "walled": walled})
         ok = nav.open_door(actor, door)
         st = doors.at(actor.mem, door, s.elevation)
         row = {"tile": door, "clicked": ok, **(st.to_dict() if st else {"missing": True})}
@@ -380,6 +421,8 @@ def walk(actor, goal: int, walls: doors.Walls | None = None, avoid: frozenset[in
 
 def arrived(actor, way: Way) -> bool:
     s = actor.snap()
+    if not alive(s) or actor.in_combat():
+        return False
     if way.out:
         return s.screen == "worldmap"
     return s.screen == "map" and _name(s.map_name) == way.to_map and s.elevation == way.to_elevation
@@ -393,6 +436,8 @@ def take(actor, way: Way, walls: doors.Walls | None = None, timeout_s: float = 2
 
     walls = walls or doors.WALLS
     actor.log.emit("action_start", action="take_way", way=way.to_dict())
+    if not alive(actor.snap()) or actor.snap().screen != "map":
+        return _end(actor, False, "not on a living map", way, {})
     if way.kind == "exit":
         s = actor.snap()
         from f1 import nav
@@ -407,6 +452,8 @@ def take(actor, way: Way, walls: doors.Walls | None = None, timeout_s: float = 2
         if not r.ok:
             return _end(actor, False, r.why, way, {"doors": r.detail})
         _reached, why = nav.go_to(actor, mine, max_steps=150, fight=True, avoid=others | _keep_off(walls, s))
+        if why.startswith("fight:") or not alive(actor.snap()) or actor.snap().screen not in {"map", "worldmap"}:
+            return _end(actor, False, why, way, {"doors": r.detail})
         ok = win32.wait_for(lambda: arrived(actor, way), timeout_s, 0.25)
         time.sleep(1.0)
         return _end(actor, ok, why, way, {"doors": r.detail})
@@ -444,6 +491,8 @@ def go(actor, goal: tuple[str, int] | str, walls: doors.Walls | None = None) -> 
     done: list[dict] = []
     for _ in range(12):
         s = actor.snap()
+        if not alive(s) or s.screen not in {"map", "worldmap"} or actor.in_combat():
+            return Result(False, "not on a safe map", {"ways": done, **where(actor)})
         if s.screen == "worldmap" and isinstance(goal, str) and goal.upper() in ("WORLD MAP", "TOWN MAP"):
             return Result(True, "there", {"ways": done})
         ways = plan((s.map_name, s.elevation), goal)

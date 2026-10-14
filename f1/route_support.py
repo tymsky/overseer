@@ -7,17 +7,37 @@ from dataclasses import dataclass
 from f1 import dialogue, geometry, quests, win32
 from f1.actions import PID_STIMPAK, Actor
 from f1.engine_map import Obj
+from f1.objectives import ObjectiveOutcome
 
 
 @dataclass(frozen=True)
 class Step:
     name: str
-    run: Callable[[Actor], bool]
+    run: Callable[[Actor], bool | ObjectiveOutcome]
     checkpoint: bool = False  # save after it succeeds
     tries: int = 3  # tries in place after failures, and loads of the last checkpoint after deaths
     final: bool = False  # the game's end: the main menu after it is no death
     optional: bool = False  # its failure stands (a roll's first outcome): skipped, and the route goes on
     exploit: bool = False  # a trick past the game's rules; run only for a character whose build allows exploits
+    id: str = ""
+    requires: tuple[str, ...] = ()
+    resolves: tuple[str, ...] = ()
+    progress: Callable[[Actor], tuple] | None = None
+    verify: Callable[[Actor], bool] | None = None
+    satisfied: Callable[[Actor], bool] | None = None
+    obligation: str = ""
+
+    @property
+    def objective_id(self) -> str:
+        from f1.objectives import slug
+
+        return self.id or "route." + slug(self.name)
+
+
+def route_manifest(steps: list[Step]) -> dict:
+    from f1.objectives import route_manifest as manifest
+
+    return manifest(steps)
 
 
 def heal_up(actor: Actor, below: float = 0.75) -> bool:

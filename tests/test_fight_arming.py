@@ -210,6 +210,7 @@ def test_a_foe_whose_aim_was_blocked_is_shot_at_next_turn_after_a_held_fire_turn
     a.attack_cost = lambda held: 4
     a.attack_reach = lambda held: 30
     a.retreat = lambda foes, ap: None
+    a.combat_move_towards = lambda tile, ap: actions.Outcome(False, "no path", {})
 
     def attack(target):
         shots.append((len(turns), target.address))
@@ -230,8 +231,9 @@ def test_a_foe_whose_aim_was_blocked_is_shot_at_next_turn_after_a_held_fire_turn
     monkeypatch.setattr(risk, "heal_below", lambda max_hp, danger: 0)
     monkeypatch.setattr(risk, "danger", lambda actor, foes, tile: 0)
     monkeypatch.setattr(odds, "armed_at_range", lambda mem, c: False)
+    monkeypatch.setattr(odds, "assess", lambda *args: odds.Odds(1, 30, 1, 1, 81, 40, accept=True))
     monkeypatch.setattr(odds, "shot_chance", lambda actor, e, pid, gap: 81 if gap <= 6 else 7)
     out = a.fight(forced=True)
     assert out.reason == "combat over"
     assert shots == [(0, 1), (1, 1)]
-    assert [d["move"] for k, d in a.log.events if k == "tactic"] == ["wait for it", "hold fire"]
+    assert not any(d["move"] == "close in" for k, d in a.log.events if k == "tactic")

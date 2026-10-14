@@ -12,11 +12,10 @@ from f1.idealist_hub import (
     PID_JUNK,
 )
 from f1.idealist_support import (
-    experience,
-    gained,
     read_book,
     take_from,
 )
+from f1.objectives import ObjectiveOutcome
 from f1.route_support import (
     Step,
     heal_up,
@@ -80,13 +79,16 @@ def spare_junk(actor: Actor) -> bool:
     """The second Junk, from the Watershed's sewer region C (a critical failure at the pump destroys the parts)."""
     if actor._count(PID_JUNK) >= 2:
         return True
+    before = actor._count(PID_JUNK)
     s = actor.snap()
     if s.elevation == 1:
         quests.use_scenery(actor, ("nwup2dn2", "Sewer Hole"), lambda: actor.snap().elevation == 0, "the sewer hole")
     if actor.snap().elevation == 0:
-        take_from(WATRSHD_SPARE_JUNK)(actor)
+        take_from(WATRSHD_SPARE_JUNK, pid=PID_JUNK, minimum=before + 1)(actor)
         quests.use_scenery(actor, ("nwdn2up1", "Ladder"), lambda: actor.snap().elevation == 1, "the ladder up")
-    return actor.snap().elevation == 1  # the spare is a precaution: without it the route goes on
+    after = actor._count(PID_JUNK)
+    actor.log.emit("spare_junk", before=before, after=after, acquired=after > before)
+    return actor.snap().elevation == 1 and after > before
 
 
 def harry(actor: Actor):
@@ -152,20 +154,24 @@ def to_the_far_side(actor: Actor) -> bool:
     return past_harry_sneaking(actor, {t for t in goals if t not in obs.blocked})
 
 
-def the_pump(actor: Actor) -> bool:
+def the_pump(actor: Actor) -> bool | ObjectiveOutcome:
     """The Junk used on the pump: Repair -5 (NH2OPUMP.INT). A plain failure keeps the parts (tried again: the game's
     own retry, up to PUMP_TRIES: on Hard Repair is about 40 here); a critical failure destroys them (the spare then,
     if spare_junk found it)."""
     if quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2:
         return True
-    xp0 = experience(actor)
+    recovered = False
 
     def fixed() -> bool:
         return quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2
 
     for _ in range(PUMP_TRIES):
         if not actor._count(PID_JUNK):
-            break
+            if not recovered:
+                recovered = True
+                spare_junk(actor)
+            if not actor._count(PID_JUNK):
+                return ObjectiveOutcome.unavailable("pump parts exhausted; best Necropolis ending cannot proceed")
         # beside the pump round Harry's notice (a plain walk there crossed his talk hex 14093, live);
         # a talk he opens is answered by HARRY.MSG 103
         obs = nav.obstacles(actor.mem, actor.snap().elevation, actor.snap().dude.address)
@@ -180,7 +186,17 @@ def the_pump(actor: Actor) -> bool:
         if fixed():
             break
         time.sleep(1.0)
-    return quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") == 2 and gained(actor, xp0, 1000)
+    if fixed():
+        return True
+    if not actor._count(PID_JUNK):
+        return ObjectiveOutcome.unavailable("pump parts exhausted; best Necropolis ending cannot proceed")
+    return ObjectiveOutcome.recoverable("repair attempts exhausted with parts retained")
+
+
+def take_chip_after_repair(actor: Actor) -> bool | ObjectiveOutcome:
+    if quests.gvar(actor, "NECROP_WATER_PUMP_FIXED") != 2:
+        return ObjectiveOutcome.unavailable("repair the pump before removing the water chip")
+    return WATER_CHIP[11].run(actor)
 
 
 def to_the_cell(actor: Actor) -> bool:
@@ -212,11 +228,26 @@ IDEALIST_NECROPOLIS = [
     *WATER_CHIP[4:6],  # the sewers to the Watershed, up to its south
     Step("the spare Junk", spare_junk, checkpoint=True, optional=True, tries=2),
     Step("past Harry, sneaking", to_the_far_side, checkpoint=True),
-    # its failure stands: a critical failure destroys the only Junk when the spare was not found (an ironman run: one
-    # plain failure, then the parts destroyed; the spare's step had found nothing at its tile, in every run so far)
-    Step("the pump fixed", the_pump, checkpoint=True, optional=True),
+    Step(
+        "the pump fixed",
+        the_pump,
+        checkpoint=True,
+        tries=1,
+        id="necropolis.pump",
+        progress=lambda a: (quests.gvar(a, "NECROP_WATER_PUMP_FIXED"), a._count(PID_JUNK)),
+        verify=lambda a: quests.gvar(a, "NECROP_WATER_PUMP_FIXED") == 2,
+    ),
     Step("to the cell manhole", to_the_cell, checkpoint=True),
-    *WATER_CHIP[7:15],  # down the manhole, Vault 12, the cab, the chip, back up to the cell
+    *WATER_CHIP[7:11],
+    Step(
+        "the water chip",
+        take_chip_after_repair,
+        checkpoint=True,
+        id="necropolis.chip",
+        requires=("necropolis.pump",),
+        verify=lambda a: bool(quests.gvar(a, "NECROP_WATER_CHIP_TAKEN")),
+    ),
+    *WATER_CHIP[12:15],
     Step("heal before the road", heal_up),
     Step("out past Harry", out_past_harry, tries=4),
 ]

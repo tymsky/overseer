@@ -29,3 +29,21 @@ def test_a_refusal_after_a_kill_stays_for_its_tail(monkeypatch):
 
 def test_a_hunt_that_ended_otherwise_is_tried_again(monkeypatch):
     assert visit(monkeypatch, "time up", 9) == (False, [])
+
+
+def test_tandi_returned_home_does_not_suppress_her_reward(monkeypatch):
+    actor = SimpleNamespace(tandi_later=False)
+    monkeypatch.setattr(sands.quests, "gvar", lambda a, name: 2)
+    collected = []
+    collect = lambda a: collected.append(True) or True
+    assert sands.now_or_later(collect, reward=True)(actor)
+    assert sands.after_the_caves(collect, last=True)(actor)
+    assert collected == [True, True]
+
+
+def test_fled_caves_do_not_get_reentered_just_for_a_tail(monkeypatch):
+    actor = SimpleNamespace(caves_deferred=True, _count=lambda pid: 0)
+    entered = []
+    monkeypatch.setattr(sands, "into_the_caves", lambda a: entered.append(True))
+    result = sands.scorpion_tail(actor)
+    assert result.status == "deferred" and entered == []

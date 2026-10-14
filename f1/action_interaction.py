@@ -3,9 +3,9 @@
 import struct
 import time
 
-from f1 import art, floats, geometry, hit, knowledge, lof, nav, scene, session, state, win32
+from f1 import art, dialogue, floats, geometry, hit, knowledge, lof, nav, scene, session, state, win32
 from f1 import engine_map as em
-from f1.action_shared import MOUSE_ARROW, Outcome
+from f1.action_shared import MOUSE_ARROW, Outcome, alive
 from f1.engine_map import Obj
 from f1.memory import ReadError
 
@@ -61,6 +61,16 @@ def aim_order(
 class InteractionActions:
     """Targeting and interaction using the Actor input and movement actions."""
 
+    def _interaction_done(self, done, targets: frozenset[int]) -> bool:
+        s = self.snap()
+        if not alive(s) or s.screen not in {"map", "worldmap", "dialogue", "elevator", "loot"}:
+            return False
+        if s.screen == "dialogue" and targets:
+            d = dialogue.read(self.mem)
+            if not d.active or d.target not in targets:
+                return False
+        return bool(done())
+
     def set_mouse_mode(self, mode: int) -> bool:
         """Toggle the cursor with M until the engine's gmouse_3d_current_mode is `mode` (0 move, 1 arrow)."""
         for _ in range(4):
@@ -76,6 +86,9 @@ class InteractionActions:
         if not self.set_mouse_mode(MOUSE_ARROW):
             return self._end(False, "no arrow cursor", {}, "talk_to")
         s = self.snap()
+        if s.screen != "map" or not alive(s):
+            return self._end(False, "not on a living map", {}, "talk_to")
+        start_map = (s.map_name, s.elevation)
         if not geometry.on_view(critter.tile, s.camera, 150):  # well inside the view already: no slide for it
             self.center_view()
         s = self.snap()
@@ -101,9 +114,14 @@ class InteractionActions:
             )
         if spot is not None:
             aims = [(spot[0] - cx, spot[1] - cy), *aims]
-        talking = lambda: self.snap().screen == "dialogue"
+        talking = lambda: self.snap().screen == "dialogue" and dialogue.read(self.mem).target == critter.address
+        recovered = 0
         for dx, dy in aims:
+            if not alive(self.snap()):
+                return self._end(False, "no living player", {}, "talk_to")
             now = state.read_critter(self.mem, critter.address)
+            if now.dead or now.hp <= 0:
+                return self._end(False, "target is no longer living", {}, "talk_to")
             if now.tile != critter.tile and geometry.on_view(now.tile, s.camera, 24):
                 # the townsfolk walk about: the aims follow the critter's hex (Curtis walked off while every aim
                 # clicked his old hex for 19 s)
@@ -121,6 +139,12 @@ class InteractionActions:
                 win32.wait_for(lambda: self.mem.glob("gdNumOptions") > 0, 5, 0.1)
                 time.sleep(0.3)
                 return self._end(True, "talking", {"aim": [dx, dy], "aimed": spot is not None}, "talk_to")
+            if self.snap().screen == "dialogue":
+                if recovered >= 2 or not nav.recover_companion_dialogue(self, start_map):
+                    return self._end(False, "wrong dialogue target", {}, "talk_to")
+                recovered += 1
+                self.companions_settle()
+                continue
             if spot is not None and floated():
                 # an aimed click answered by a float over their head instead of a talk: the cook's LK check failed
                 # (COOK.INT talk_p_proc), and every further aim only floated it again for 15 s
@@ -142,6 +166,10 @@ class InteractionActions:
         if not self.set_mouse_mode(MOUSE_ARROW):
             return False
         s = self.snap()
+        if not alive(s) or s.screen != "map":
+            return False
+        start_map = (s.map_name, s.elevation)
+        checked = lambda: self._interaction_done(done, targets)
         if not geometry.on_view(tile, s.camera, 150):  # well inside the view already: no slide for it
             self.center_view()
         s = self.snap()
@@ -168,9 +196,21 @@ class InteractionActions:
                 front = [(predicted[0] - cx, predicted[1] - cy + lift), *front]
             points = front + [p for p in points if p not in front]
             points += [p for p in AIM_GRID if p not in points]
+        recovered = 0
         for dx, dy in points:
-            if done():  # a click whose effect came late (the vats computer's talk after the use animation)
+            if self.snap().screen == "dialogue" and nav.companion_talk(self, self.snap()):
+                if recovered >= 2 or not nav.recover_companion_dialogue(self, start_map):
+                    return False
+                recovered += 1
+                self.companions_settle()
+                if not self.set_mouse_mode(MOUSE_ARROW):
+                    return False
+            if checked():  # a click whose effect came late (the vats computer's talk after the use animation)
                 return True
+            s = self.snap()
+            if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != start_map:
+                return False
+            cx, cy = geometry.tile_center(tile, s.camera)
             if time.monotonic() > end:
                 break
             x, y = cx + dx, cy + dy - lift
@@ -192,17 +232,31 @@ class InteractionActions:
                 self.point(cx + dx, cy + dy - lift)
             start = self.snap().dude.tile
             self.click()
-            moved = win32.wait_for(lambda start=start: done() or self.snap().dude.tile != start, 1.5, 0.1)
-            if moved and win32.wait_for(done, max(1.0, end - time.monotonic()), 0.1):
+            moved = win32.wait_for(
+                lambda start=start: (
+                    checked() or self.snap().screen != "map" or not alive(self.snap()) or self.snap().dude.tile != start
+                ),
+                1.5,
+                0.1,
+            )
+            if (
+                moved
+                and win32.wait_for(
+                    lambda: checked() or self.snap().screen != "map", max(1.0, end - time.monotonic()), 0.1
+                )
+                and checked()
+            ):
                 if targets:
                     _CLICKED[named] = (dx, dy - lift)
                 return True
-            if self.snap().screen == "loot" and not done():
+            if self.snap().screen == "loot" and not checked():
                 session.press("esc")
                 win32.wait_for(lambda: self.snap().screen == "map", 3, 0.1)
             if time.monotonic() > end:
                 break
-        return bool(done())
+        if recovered < 2 and nav.companion_talk(self, self.snap()):
+            nav.recover_companion_dialogue(self, start_map)
+        return checked()
 
     def _art_aims(self, tile: int, targets: frozenset[int]) -> list[tuple[int, int]]:
         """Points round the hex centre of `tile` where one of `targets` shows in its picture and no picture of a
@@ -363,10 +417,22 @@ class InteractionActions:
         the Glow's beam lay beyond where the camera would scroll (live), and it keeps the aim on view."""
         before = state.messages(self.mem, 3)
         s = self.snap()
+        if not alive(s) or s.screen != "map":
+            return self._end(False, "not on a living map", detail, action)
+        start_map = (s.map_name, s.elevation)
+        checked = lambda: self._interaction_done(done, targets)
         if geometry.distance(s.dude.tile, tile) > 3:
             obs = nav.obstacles(self.mem, s.elevation, s.dude.address)
             near = {t for r in (1, 2) for t in geometry.ring(tile, r) if t not in obs.blocked}
-            nav.go_to(self, near or {tile}, 80)
+            reached, why = nav.go_to(self, near or {tile}, 80)
+            if not reached:
+                return self._end(False, f"could not approach: {why}", detail, action)
+        if (
+            not alive(self.snap())
+            or self.snap().screen != "map"
+            or (self.snap().map_name, self.snap().elevation) != start_map
+        ):
+            return self._end(False, "approach left the target map", detail, action)
         self.center_view()
         s = self.snap()
         if not geometry.on_view(tile, s.camera, 48):
@@ -388,18 +454,53 @@ class InteractionActions:
             detail = detail | {"aimed": spot is not None}
             time.sleep(LOOK_SETTLE_S)
             before = state.messages(self.mem, 3)  # the rests' looks (a door's locked line) are not the result
+        recovered = 0
         for dx, dy in offsets:
+            if self.snap().screen == "dialogue" and nav.companion_talk(self, self.snap()):
+                if recovered >= 2 or not nav.recover_companion_dialogue(self, start_map):
+                    return self._end(False, "companion dialogue did not close", detail, action)
+                recovered += 1
+                self.companions_settle()
+            if checked():
+                break
+            s = self.snap()
+            if not alive(s) or s.screen != "map" or (s.map_name, s.elevation) != start_map:
+                return self._end(False, "interaction interrupted", detail, action)
+            cx, cy = geometry.tile_center(tile, s.camera)
+            if targets:
+                if (
+                    not self.set_mouse_mode(MOUSE_ARROW)
+                    or self.confirm((cx + dx, cy + dy), targets, action) not in targets
+                ):
+                    continue
+                time.sleep(LOOK_SETTLE_S)
             if not arm():
                 return self._end(False, "no use cursor", detail, action)
             self.point(cx + dx, cy + dy)
             start = self.snap().dude.tile
             self.click()
-            if win32.wait_for(lambda start=start: done() or said() or self.snap().dude.tile != start, 2.0, 0.1):
-                win32.wait_for(lambda: done() or said(), max(1.0, end - time.monotonic()), 0.1)
-            if done() or said() or time.monotonic() > end:
+            if win32.wait_for(
+                lambda start=start: (
+                    checked()
+                    or said()
+                    or self.snap().screen != "map"
+                    or not alive(self.snap())
+                    or self.snap().dude.tile != start
+                ),
+                2.0,
+                0.1,
+            ):
+                win32.wait_for(
+                    lambda: checked() or said() or self.snap().screen != "map", max(1.0, end - time.monotonic()), 0.1
+                )
+            if self.snap().screen == "dialogue" and nav.companion_talk(self, self.snap()):
+                continue
+            if checked() or said() or time.monotonic() > end:
                 break
         time.sleep(0.5)
-        ok = bool(done())
+        if recovered < 2 and nav.companion_talk(self, self.snap()):
+            nav.recover_companion_dialogue(self, start_map)
+        ok = checked()
         new = [m for m in state.messages(self.mem, 3) if m not in before]
         return self._end(ok, "done" if ok else "no effect", detail | {"aim": [dx, dy], "messages": new}, action)
 

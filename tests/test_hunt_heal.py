@@ -24,6 +24,7 @@ def test_a_hurt_from_a_fight_inside_the_walk_is_healed_before_the_next(monkeypat
         log=SimpleNamespace(emit=lambda kind, **d: events.append((kind, d))),
     )
     monkeypatch.setattr(quests, "foes_of", lambda actor, kind: [foe])
+    monkeypatch.setattr(quests, "poison", lambda actor: 0)
     monkeypatch.setattr(nav, "obstacles", lambda mem, elevation, address: SimpleNamespace(blocked=frozenset()))
     heals: list = []
     monkeypatch.setattr(quests, "heal", lambda actor: heals.append(hp[0]) or hp.__setitem__(0, 38))

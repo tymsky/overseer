@@ -34,6 +34,7 @@ GLOBAL_LIST = (
     Global("combat_state", 0x4FEC84, 20, "combat flags; 2 at start"),
     Global("combat_turn_running", 0x4FEC80, 3),
     Global("combat_list", 0x56BC8C, 10, "Object** in turn order"),
+    Global("list_com", 0x56BC90, 10, "Active prefix of combat_list; combat.cc list_com"),
     Global("map_elevation", 0x505AF8, 20),
     Global("map_data", 0x6302D0, 1, "MapHeader of the current map"),
     Global("tile_center_tile", 0x668E54, 5, "the camera"),

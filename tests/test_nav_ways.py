@@ -42,7 +42,9 @@ class Actor:
         self.log = SimpleNamespace(emit=lambda *a, **k: None)
 
     def snap(self):
-        return SimpleNamespace(map_name="V13ENT.MAP", elevation=0, dude=SimpleNamespace(tile=1, address=9))
+        return SimpleNamespace(
+            screen="map", map_name="V13ENT.MAP", elevation=0, dude=SimpleNamespace(tile=1, address=9, hp=20)
+        )
 
 
 def test_an_exit_walk_keeps_off_the_other_destinations_grids(monkeypatch):
@@ -103,29 +105,32 @@ def test_a_companion_in_the_only_way_is_stepped_away_from(monkeypatch):
 def test_a_companions_talk_a_click_opened_is_closed_and_the_walk_goes_on(monkeypatch):
     # Old Town, an ironman run: a door's click opened Ian's talk; the walk ended "left the map (dialogue)" and the
     # step waited on the open talk until the watchdog ended the run
-    dude = SimpleNamespace(team=0, address=1, elevation=0, tile=500, dead=False)
+    dude = SimpleNamespace(team=0, address=1, elevation=0, tile=500, hp=20, dead=False)
     ian = SimpleNamespace(team=0, address=2, elevation=0, tile=501, dead=False)
     screen = {"now": "dialogue", "map": "HUBOLDTN.MAP"}
     events: list = []
     actor = SimpleNamespace(
         mem=None,
-        snap=lambda: SimpleNamespace(screen=screen["now"], map_name=screen["map"], dude=dude),
+        snap=lambda: SimpleNamespace(screen=screen["now"], map_name=screen["map"], elevation=0, dude=dude),
+        in_combat=lambda: False,
         log=SimpleNamespace(emit=lambda kind, **d: events.append((kind, d))),
     )
-    talk = SimpleNamespace(active=True, target=ian.address)
+    talk = SimpleNamespace(active=True, target=ian.address, is_line=True, options=[])
     monkeypatch.setattr(nav.state, "critters", lambda mem: [dude, ian])
     monkeypatch.setattr(nav.dialogue, "read", lambda mem: talk)
 
-    def close(mem):
-        screen.update(now="map", map="ELSEWHERE.MAP")  # the walk's next look: it went on past the talk
-        return True
+    def close(mem, choice):
+        screen.update(now="map")
+        dude.tile = 900
+        talk.active = False
 
-    monkeypatch.setattr(nav.dialogue, "close", close)
-    _, why = nav._walk(actor, {900}, 5, True, frozenset(), [])
+    monkeypatch.setattr(nav.dialogue, "choose", close)
+    monkeypatch.setattr(nav, "obstacles", lambda *a, **k: nav.Obstacles(frozenset(), {}))
+    reached, why = nav._walk(actor, {900}, 5, True, frozenset(), [])
     assert events == [("companion_talk", {"closed": True})]
-    assert why == "left the map (map, ELSEWHERE.MAP)"
+    assert reached and why == "arrived"
     # anyone else's talk is not closed: the walk stops with it open, as before
     screen.update(now="dialogue", map="HUBOLDTN.MAP")
-    talk.target, events[:] = 77, []
-    assert nav._walk(actor, {900}, 5, True, frozenset(), [])[1] == "left the map (dialogue, HUBOLDTN.MAP)"
+    talk.target, talk.active, events[:] = 77, True, []
+    assert nav._walk(actor, {900}, 5, True, frozenset(), [])[1] == "unexpected state (dialogue, HUBOLDTN.MAP)"
     assert events == []

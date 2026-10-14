@@ -22,3 +22,14 @@ class Held(NamedTuple):
     pid: int
     loaded: int
     ammo_pid: int
+
+
+def alive(snapshot) -> bool:
+    """A readable player with positive HP; a menu never establishes survival."""
+    dude = snapshot.dude
+    return bool(
+        dude is not None
+        and dude.hp > 0
+        and not getattr(dude, "dead", False)
+        and getattr(snapshot, "screen", "map") not in {"main_menu", "select_character", "none"}
+    )

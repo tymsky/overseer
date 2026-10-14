@@ -9,6 +9,7 @@ from f1 import barter, chargen, clock, dialogue, flows, knowledge, loot, risk, s
 from f1.actions import Actor
 from f1.engine_map import Obj
 from f1.memory import ReadError
+from f1.objectives import ObjectiveOutcome, identified_steps, outcome, route_manifest
 from f1.route_support import (
     Step,
     heal_up,
@@ -102,24 +103,27 @@ def death_screen(s: state.Snapshot) -> bool:
     return s.screen.startswith("window") and s.level == 1 and getattr(s, "experience", None) == 0
 
 
-def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.Snapshot | None, bool]:
+def try_step(actor: Actor, step: Step, number: int) -> tuple[ObjectiveOutcome, bool, state.Snapshot | None, bool]:
     """One try of step `number` (1-based), logged and timed: (its own verdict, whether the player died, the game
     after it, whether the game got stuck: the watchdog saw nothing move, or the game is gone, then with no
     snapshot). A step that crashed failed."""
     log = actor.log
-    log.emit("objective", text=step.name, step=number)
+    log.emit("objective", text=step.name, step=number, objective_id=step.objective_id)
     t0 = time.monotonic()
     watchdog.clear()
     stuck = False
     try:
-        ok = step.run(actor)
+        result = outcome(step.run(actor))
+        if result and step.verify is not None and not step.verify(actor):
+            result = ObjectiveOutcome.recoverable("objective postcondition not verified")
     except STEP_ERRORS as e:
         log.emit("step_error", step=step.name, error=repr(e)[:300])
-        ok, stuck = False, isinstance(e, watchdog.Stuck)
+        result, stuck = ObjectiveOutcome("technical_error", repr(e)[:300]), isinstance(e, watchdog.Stuck)
+    ok = bool(result)
     watchdog.clear()  # a trip after the step's last look belongs to no one now
     if not actor.game_alive():  # a crash, or the game closed: a stuck game, restarted by the reload
         log.emit("step_end", step=step.name, ok=False, seconds=round(time.monotonic() - t0, 1), crashed=True)
-        return False, False, None, True
+        return ObjectiveOutcome("technical_error", "game exited during objective"), False, None, True
     if not ok and getattr(actor, "mem", None) is not None and dialogue.read(actor.mem).active:
         # a failed talk left open would meet the next step: Curtis's, then the bookcase's loot took the talk for a
         # shop's barter and left the Scout Handbook and the rope behind (an ironman run, Vault 15 without a rope)
@@ -139,9 +143,56 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[bool, bool, state.S
     rads = actor.mem.i32(s.dude.address + Obj.CRITTER_RADIATION) if s.dude and hasattr(actor, "mem") else None
     log.emit(
         "step_end", step=step.name, ok=ok and not died, seconds=round(time.monotonic() - t0, 1),
-        hp=s.dude.hp if s.dude else None, rads=rads,
+        hp=s.dude.hp if s.dude else None, rads=rads, objective_id=step.objective_id,
+        status=result.status, reason=result.reason,
     )  # fmt: skip
-    return ok, died, s, stuck
+    return result, died, s, stuck
+
+
+def failure_state(actor: Actor, step: Step, s: state.Snapshot) -> tuple:
+    """Observe relevant resources and quest progress, rather than only the player's position."""
+    inventory = (
+        tuple(sorted((pid, quantity) for _address, pid, quantity in actor.items())) if hasattr(actor, "items") else ()
+    )
+    extra = step.progress(actor) if step.progress else ()
+    return (
+        s.screen,
+        s.map_name,
+        s.elevation,
+        s.dude.tile if s.dude else None,
+        s.dude.hp if s.dude else None,
+        inventory,
+        extra,
+    )
+
+
+def inferred_progress(actor: Actor, steps: list[Step], start: int, progress: dict | None = None) -> tuple[dict, dict]:
+    """A loaded segment reconstructs only facts backed by its current game predicates."""
+    statuses = dict((progress or {}).get("statuses", {}))
+    pending = {key: dict(value) for key, value in (progress or {}).get("pending", {}).items()}
+    for step in steps[: start - 1]:
+        predicate = step.satisfied or step.verify
+        if predicate is None:
+            continue
+        achieved = predicate(actor)
+        statuses[step.objective_id] = "achieved" if achieved else "deferred" if step.obligation else "unavailable"
+        if achieved:
+            for key in (step.objective_id, *step.resolves):
+                pending.pop(key, None)
+        elif step.obligation:
+            pending[step.obligation] = {
+                "objective_id": step.objective_id,
+                "step": step.name,
+                "required": pending.get(step.obligation, {}).get("required", False) or not step.optional,
+                "reason": "unfulfilled loaded-game predicate",
+            }
+    return statuses, pending
+
+
+def sync_obligations(actor: Actor, pending: dict) -> None:
+    actor.caves_deferred = "sands.caves" in pending
+    actor.tandi_later = "sands.tandi" in pending
+    actor.antidote_later = any(key in pending for key in ("sands.antidote", "sands.jarvis", "sands.tail"))
 
 
 def checkpoint(
@@ -217,6 +268,7 @@ def run(
     exploits: bool | None = None,
     on_step: Callable[[int], None] | None = None,
     ironman: bool = False,
+    progress: dict | None = None,
 ) -> dict:
     """Run steps from `start` (1-based). `on_step(i)` is told each step's index (0-based) before it runs. Starting mid-way assumes slot 1 holds the checkpoint before it. With
     `level_up`, a checkpoint first spends a level-up when the level rose (the game adds the skill points only when
@@ -233,16 +285,33 @@ def run(
 
     A step marked `exploit` runs only when `exploits` is true; None takes it from the build of the character in the
     game (chargen.Build.exploits, off by default)."""
+    steps = identified_steps(steps)
+    actor.ironman = ironman
+    actor.ending_audit = None
     log, i, loads, leveled = actor.log, start - 1, {}, 0
     fails: dict[str, int] = {}
     skipped: list[str] = []
     last_failure: dict[str, tuple] = {}  # where the game stood after a step's last failure (fail fast)
+    actor.objective_progress = None
+    statuses, pending = inferred_progress(actor, steps, start, progress)
+    actor.pending_objectives = pending
+    sync_obligations(actor, pending)
+    actor.objective_progress = {"statuses": statuses, "pending": pending}
     last_checkpoint = max((k for k in range(start - 1) if steps[k].checkpoint), default=-1)
+    checkpoint_progress = {last_checkpoint: (dict(statuses), {k: dict(v) for k, v in pending.items()})}
     if exploits is None:  # the character's build decides (off for a name that is not ours, or a fake game)
         mem = getattr(actor, "mem", None)
         build = chargen.build_of(state.character_name(mem)) if mem is not None else None
         exploits = bool(build and build.exploits)
-    log.emit("route_start", steps=len(steps), exploits=exploits, ironman=ironman)
+    manifest = route_manifest(steps)
+    log.emit(
+        "route_start",
+        steps=len(steps),
+        exploits=exploits,
+        ironman=ironman,
+        objectives=manifest["objectives"],
+        route_hash=manifest["route_hash"],
+    )
     carried: list = []  # the loadout the weapon was last readied for
     try:
         ensure_preferences(actor, prefs)
@@ -261,7 +330,85 @@ def run(
             continue
         if on_step:
             on_step(i)
-        ok, died, s, stuck = try_step(actor, step, i + 1)
+        missing = [key for key in step.requires if statuses.get(key) != "achieved"]
+        if missing:
+            why = "unfulfilled dependencies: " + ", ".join(missing)
+            result = (
+                ObjectiveOutcome.deferred(why)
+                if any(statuses.get(k) == "deferred" for k in missing)
+                else ObjectiveOutcome.unavailable(why)
+            )
+            s, died, stuck = actor.snap(), False, False
+            log.emit("objective", text=step.name, step=i + 1, objective_id=step.objective_id)
+            log.emit(
+                "step_end",
+                step=step.name,
+                ok=False,
+                status=result.status,
+                reason=why,
+                objective_id=step.objective_id,
+                seconds=0,
+            )
+        else:
+            result, died, s, stuck = try_step(actor, step, i + 1)
+        ok = bool(result)
+        statuses[step.objective_id] = "death" if died else result.status
+        if not died and not stuck and result.status == "technical_error":
+            fields = {
+                "ok": False,
+                "at": step.name,
+                "why": result.reason,
+                "loads": loads,
+                "fails": fails,
+                "skipped": skipped,
+                "ended": "error",
+                "step": i + 1,
+                "objective_id": step.objective_id,
+                "status": "technical_error",
+            }
+            log.emit("route_end", **fields)
+            return fields
+        if not died and not stuck and result.status in {"deferred", "unavailable"}:
+            if result.status == "deferred":
+                key = result.obligation or step.obligation or step.objective_id
+                pending[key] = {
+                    "objective_id": step.objective_id,
+                    "step": step.name,
+                    "required": pending.get(key, {}).get("required", False) or not step.optional,
+                    "reason": result.reason,
+                }
+                log.emit("deferred", step=step.name, objective_id=step.objective_id, obligation=key, why=result.reason)
+                sync_obligations(actor, pending)
+                i += 1
+                continue
+            if step.optional:
+                log.emit(
+                    "skipped", step=step.name, objective_id=step.objective_id, why=result.reason, status="unavailable"
+                )
+                skipped.append(step.name)
+                i += 1
+                continue
+            fields = {
+                "ok": False,
+                "at": step.name,
+                "why": result.reason,
+                "loads": loads,
+                "fails": fails,
+                "skipped": skipped,
+                "ended": "failed",
+                "step": i + 1,
+                "objective_id": step.objective_id,
+                "status": "unavailable",
+            }
+            log.emit("route_end", **fields)
+            return fields
+        if ok and not died:
+            verified_resolves = step.resolves if step.verify is None or step.verify(actor) else ()
+            for key in (step.objective_id, *verified_resolves, *result.resolves):
+                if key in pending:
+                    log.emit("obligation_resolved", obligation=key, objective_id=step.objective_id)
+                    del pending[key]
+            sync_obligations(actor, pending)
         if ok and not died and step.checkpoint:
             try:
                 saved, leveled = checkpoint(actor, i + 1, s.level, leveled, level_up, carried, save=not ironman)
@@ -275,6 +422,8 @@ def run(
             else:
                 if saved:  # an unsaved checkpoint must not become the place a reload resumes from
                     last_checkpoint = i
+                    checkpoint_progress[i] = (dict(statuses), {k: dict(v) for k, v in pending.items()})
+                    log.emit("objective_checkpoint", step=i + 1, statuses=dict(statuses), pending=dict(pending))
                 elif not ironman:
                     log.emit("checkpoint_failed", step=step.name)
         if ok and not died:
@@ -282,13 +431,13 @@ def run(
             continue
         if not died and not stuck:  # the failure stands; tried again in place, never loaded for
             fails[step.name] = fails.get(step.name, 0) + 1
-            where = (s.map_name, s.elevation, s.dude.tile if s.dude else None, s.dude.hp if s.dude else None)
+            where = failure_state(actor, step, s)
             if where == last_failure.get(step.name) and not step.optional:  # fail fast: again, and nothing changed
                 why = "no progress: failed again and the game did not change"
                 log.emit("route_end", ok=False, at=step.name, why=why, loads=loads, fails=fails, skipped=skipped,
-                         ended="stuck")  # fmt: skip
+                         ended="failed", objective_id=step.objective_id, status=result.status)  # fmt: skip
                 return {"ok": False, "at": step.name, "why": why, "loads": loads, "fails": fails, "skipped": skipped,
-                        "ended": "stuck", "step": i + 1}  # fmt: skip
+                        "ended": "failed", "step": i + 1, "objective_id": step.objective_id}  # fmt: skip
             last_failure[step.name] = where
             if fails[step.name] < step.tries:
                 log.emit("retry", step=step.name, tries=fails[step.name])
@@ -298,14 +447,43 @@ def run(
                 skipped.append(step.name)
                 i += 1
                 continue
-            log.emit("route_end", ok=False, at=step.name, loads=loads, fails=fails, skipped=skipped, ended="failed")
+            log.emit(
+                "route_end",
+                ok=False,
+                at=step.name,
+                loads=loads,
+                fails=fails,
+                skipped=skipped,
+                ended="failed",
+                objective_id=step.objective_id,
+                status=result.status,
+            )
             return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped,
-                    "ended": "failed", "step": i + 1}  # fmt: skip
+                    "ended": "failed", "step": i + 1, "objective_id": step.objective_id}  # fmt: skip
         if ironman:  # no load: the run ends here
             ended = "death" if died else "stuck"
             hp = s.dude.hp if s and s.dude else None
-            log.emit("route_end", ok=False, at=step.name, ended=ended, step=i + 1, hp=hp, fails=fails, skipped=skipped)
-            return {"ok": False, "at": step.name, "ended": ended, "step": i + 1, "fails": fails, "skipped": skipped}
+            log.emit(
+                "route_end",
+                ok=False,
+                at=step.name,
+                ended=ended,
+                step=i + 1,
+                hp=hp,
+                fails=fails,
+                skipped=skipped,
+                objective_id=step.objective_id,
+                status=result.status,
+            )
+            return {
+                "ok": False,
+                "at": step.name,
+                "ended": ended,
+                "step": i + 1,
+                "fails": fails,
+                "skipped": skipped,
+                "objective_id": step.objective_id,
+            }
         failed = steps[last_checkpoint + 1] if last_checkpoint + 1 < len(steps) else step
         loads[failed.name] = loads.get(failed.name, 0) + 1
         if loads[failed.name] > failed.tries:
@@ -315,9 +493,34 @@ def run(
         if not reload_checkpoint(actor, prefs, carried):
             log.emit("route_end", ok=False, at=step.name, loads=loads, why="the checkpoint would not load")
             return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped}
+        restored_statuses, restored_pending = checkpoint_progress[last_checkpoint]
+        statuses.clear()
+        statuses.update(restored_statuses)
+        pending.clear()
+        pending.update({k: dict(v) for k, v in restored_pending.items()})
+        actor.pending_objectives = pending
+        sync_obligations(actor, pending)
+        actor.objective_progress = {"statuses": statuses, "pending": pending}
         i = last_checkpoint + 1
-    log.emit("route_end", ok=True, loads=loads, fails=fails, skipped=skipped, ended="done")
-    return {"ok": True, "loads": loads, "fails": fails, "skipped": skipped, "ended": "done"}
+    unresolved = {key: value for key, value in pending.items() if value["required"]}
+    result = {
+        "ok": not unresolved,
+        "loads": loads,
+        "fails": fails,
+        "skipped": skipped,
+        "ended": "failed" if unresolved else "done",
+    }
+    if pending:
+        result["pending"] = pending
+    if ironman:
+        audit = getattr(actor, "ending_audit", None)
+        result.update(
+            best_ending=bool(audit and audit["ok"] and audit.get("ending_seen") is True and not unresolved),
+            goal_audit=audit,
+        )
+        result["progression"] = {"statuses": dict(statuses), "pending": {k: dict(v) for k, v in pending.items()}}
+    log.emit("route_end", **result)
+    return result
 
 
 def fail_fast(actor: Actor, error: BaseException) -> None:

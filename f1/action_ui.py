@@ -3,7 +3,9 @@
 import time
 
 from f1 import clock, dialogue, session, state, ui, watchdog, win32
-from f1.action_shared import Outcome
+from f1 import engine_map as em
+from f1.action_inventory import PID_STIMPAK
+from f1.action_shared import Outcome, alive
 from f1.memory import ReadError
 
 REST = {"10 minutes": 0, "30 minutes": 1, "1 hour": 2, "2 hours": 3, "3 hours": 4, "4 hours": 5, "5 hours": 6,
@@ -38,8 +40,16 @@ class ScreenActions:
         (codes from 510: 510 + the duration's index), wait until the game time stops moving, close. Where the game
         allows no rest (near enemies: V13ENT's cave, a worker and the instance alike) the clock's button answers with
         a message box (MESSAGE_BOX) instead of the rest lines: "refused here", told apart from a button not found."""
-        t0 = self.snap().game_time
+        initial = self.snap()
+        t0 = initial.game_time
         self.log.emit("action_start", action="rest", how=how, game_time=t0)
+        if not alive(initial) or initial.screen != "map":
+            return self._end(False, "not on a living map", {}, "rest")
+        amount = self.mem.i32(initial.dude.address + em.Obj.CRITTER_POISON)
+        if amount and (
+            initial.dude.hp <= 5 or initial.dude.hp - (amount + 1) // 2 <= 5 and not self._count(PID_STIMPAK)
+        ):
+            return self._end(False, "poison emergency; medicine required before rest", {"poison": amount}, "rest")
         if self.in_combat():  # the Pip-Boy does not open in combat; its refusal box stayed up in the caves (16:3x)
             return self._end(False, "in combat", {}, "rest")
         session.press("p")
@@ -48,7 +58,7 @@ class ScreenActions:
             session.press("p")
         if not win32.wait_for(lambda: self.snap().screen == "pipboy", 4, 0.1):
             for _ in range(3):  # a box said why not (a message window over the map): it takes Enter
-                if self.snap().screen in ("map", "pipboy"):
+                if self.snap().screen in ("map", "pipboy") or not alive(self.snap()) or not self._box_up():
                     break
                 session.press("enter")
                 win32.wait_for(lambda: self.snap().screen in ("map", "pipboy"), 1.5, 0.1)
@@ -90,7 +100,13 @@ class ScreenActions:
             win32.wait_for(lambda: self.snap().screen != "pipboy", 4, 0.1)
         s = self.snap()
         hours = (s.game_time - t0) / 36000
-        return self._end(s.game_time > t0, f"rested {hours:.1f} h", {"game_time": s.game_time, "hp": s.dude.hp}, "rest")
+        ok = alive(s) and s.screen == "map" and s.game_time > t0
+        return self._end(
+            ok,
+            f"rested {hours:.1f} h" if ok else "rest interrupted",
+            {"game_time": s.game_time, "hp": s.dude.hp if s.dude else None},
+            "rest",
+        )
 
     def _box_up(self) -> bool:
         """The engine's message box (dialog_out) is the topmost window."""

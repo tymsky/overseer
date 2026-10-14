@@ -39,6 +39,7 @@ from f1 import (
 from f1 import engine_map as em
 from f1 import talk as talk_mod
 from f1.action_inventory import INVENTORY_AP, ITEM_MENU_DROP, ITEM_MENU_USE
+from f1.action_shared import alive
 from f1.actions import PID_STIMPAK, Actor
 from f1.telemetry import EventLog
 
@@ -78,8 +79,16 @@ STIMPAKS_KEPT = 4  # for fights; those above it heal first: a rest costs days (b
 def spare_stimpaks(actor: Actor, target: float, keep: int = STIMPAKS_KEPT) -> None:
     """Stimpaks above `keep` used until the HP reaches `target`. Resting heals the healing rate every 3 hours: the
     Idealist's rate 2 turned the caves' two heals into about three days (a run ended on day 14.6, not 11.6)."""
-    while actor.snap().dude.hp < target and actor._count(PID_STIMPAK) > keep and not actor.in_combat():
+    while (
+        alive(actor.snap())
+        and actor.snap().dude.hp < target
+        and actor._count(PID_STIMPAK) > keep
+        and not actor.in_combat()
+    ):
+        before = (actor.snap().dude.hp, actor._count(PID_STIMPAK))
         if not actor.use_on_self(PID_STIMPAK).ok:
+            break
+        if not alive(actor.snap()) or (actor.snap().dude.hp, actor._count(PID_STIMPAK)) == before:
             break
 
 
@@ -88,15 +97,17 @@ def heal(actor: Actor, below: float = HEAL_BELOW) -> bool:
     critter_can_obj_dude_rest refuses it only near a living critter the player hit, in a town's maps; the radscorpion
     caves are Shady Sands' by xlate_town_table), else the kept stimpaks. True when the HP got there."""
     target = below * actor.max_hp
+    if not alive(actor.snap()) or actor.in_combat() or not _clear_poison(actor):
+        return False
     spare_stimpaks(actor, target)
+    if not alive(actor.snap()) or getattr(actor.snap(), "screen", "map") != "map":
+        return False
     if actor.snap().dude.hp >= target:
         return True
     if not actor.in_combat() and not actor.rest("until healed").ok:
         win32.wait_for(lambda: actor.snap().screen == "map", 5, 0.2)
-    while actor.snap().dude.hp < target and actor._count(PID_STIMPAK) > 0 and not actor.in_combat():
-        if not actor.use_on_self(PID_STIMPAK).ok:
-            break
-    return actor.snap().dude.hp >= target
+    spare_stimpaks(actor, target, keep=0)
+    return alive(actor.snap()) and getattr(actor.snap(), "screen", "map") == "map" and actor.snap().dude.hp >= target
 
 
 PID_ANTIDOTE = 49  # f1/idealist.py
@@ -112,7 +123,38 @@ def poison(actor: Actor) -> int:
     return actor.mem.i32(s.dude.address + em.Obj.CRITTER_POISON) if s.dude else 0
 
 
-def mend_on_the_road(actor: Actor) -> None:
+def _clear_poison(actor: Actor) -> bool:
+    """Drain poison with verified medicine/rest progress, never retry a rest at the emergency HP floor."""
+    if not alive(actor.snap()) or getattr(actor.snap(), "screen", "map") != "map" or actor.in_combat():
+        return False
+    before = poison(actor)
+    if before >= POISON_MATTERS and actor._count(PID_ANTIDOTE):
+        actor.use_on_self(PID_ANTIDOTE)
+    for _ in range(MEND_RESTS):
+        if not alive(actor.snap()) or actor.in_combat():
+            return False
+        amount, hp = poison(actor), actor.snap().dude.hp
+        if amount < POISON_MATTERS:
+            return hp > amount  # one remaining tick must also be survivable
+        if hp <= 5:
+            spare_stimpaks(actor, MEND_FLOOR * actor.max_hp, keep=0)
+            if not alive(actor.snap()) or getattr(actor.snap(), "screen", "map") != "map":
+                return False
+            hp = actor.snap().dude.hp
+        # A poison tick stops rest at five HP. Without medicine, exhausting that margin leaves no safe next rest.
+        if hp <= 5 or (hp - (amount + 1) // 2 <= 5 and not actor._count(PID_STIMPAK)):
+            actor.log.emit("preparation_blocked", reason="poison emergency", hp=hp, poison=amount)
+            return False
+        if not actor.rest(POISON_REST).ok:
+            win32.wait_for(lambda: actor.snap().screen == "map", 5, 0.2)
+            return False
+        if not alive(actor.snap()) or poison(actor) >= amount:
+            actor.log.emit("preparation_blocked", reason="poison rest made no progress", poison=amount)
+            return False
+    return alive(actor.snap()) and poison(actor) < POISON_MATTERS and actor.snap().dude.hp > poison(actor)
+
+
+def mend_on_the_road(actor: Actor) -> bool:
     """After a road fight, before the world map again: an Antidote when poisoned, the spare stimpaks up to MEND_BELOW,
     rests of POISON_REST until the poison is out, then the kept stimpaks below MEND_FLOOR (a rest until healed only
     when none is left). Poison works by game time (critter.cc critter_check_poison: 1 HP and 2 poison a tick, a rest
@@ -120,25 +162,49 @@ def mend_on_the_road(actor: Actor) -> None:
     the way to Junktown, a 50x run died of it. The HP itself is not rested back: a day of
     travel heals as a day of rest (worldmap.cc partyMemberRestingHeal(24)), and a rest until healed took 70 game hours
     after one fight (live; so only the poison is rested out)."""
-    if actor.in_combat() or actor.snap().dude is None:
-        return
+    if actor.in_combat() or not alive(actor.snap()):
+        return False
     p0, hp0 = poison(actor), actor.snap().dude.hp
     if p0 >= POISON_MATTERS and actor._count(PID_ANTIDOTE):
         actor.use_on_self(PID_ANTIDOTE)
+    if not alive(actor.snap()):
+        return False
     spare_stimpaks(actor, MEND_BELOW * actor.max_hp)
-    for _ in range(MEND_RESTS):
-        if poison(actor) < POISON_MATTERS:
-            break
-        if actor.snap().dude.hp <= 5:  # a tick at 5 HP or less ends the rest at once: heal first
-            spare_stimpaks(actor, MEND_FLOOR * actor.max_hp, keep=0)
-        if not actor.rest(POISON_REST).ok:
-            win32.wait_for(lambda: actor.snap().screen == "map", 5, 0.2)
-            break
+    if not _clear_poison(actor):
+        return False
     floor = MEND_FLOOR * actor.max_hp
     spare_stimpaks(actor, floor, keep=0)
+    if not alive(actor.snap()):
+        return False
     if actor.snap().dude.hp < floor and not actor.in_combat() and not actor.rest("until healed").ok:
         win32.wait_for(lambda: actor.snap().screen == "map", 5, 0.2)
-    actor.log.emit("mend", poison_before=p0, poison=poison(actor), hp_before=hp0, hp=actor.snap().dude.hp)
+    s = actor.snap()
+    ok = (
+        alive(s)
+        and getattr(s, "screen", "map") == "map"
+        and not actor.in_combat()
+        and poison(actor) < POISON_MATTERS
+        and s.dude.hp >= floor
+    )
+    actor.log.emit(
+        "mend", ok=bool(ok), poison_before=p0, poison=poison(actor), hp_before=hp0, hp=s.dude.hp if s.dude else None
+    )
+    return bool(ok)
+
+
+def prepare_after_fight(actor: Actor) -> bool:
+    """The common gate before navigation or a hunt exposes the player to another fight."""
+    s = actor.snap()
+    if not alive(s) or s.screen != "map" or actor.in_combat():
+        return False
+    ok = mend_on_the_road(actor) and heal(actor)
+    actor.log.emit(
+        "fight_preparation",
+        ok=bool(ok),
+        hp=actor.snap().dude.hp if actor.snap().dude else None,
+        stimpaks=actor._count(PID_STIMPAK),
+    )
+    return bool(ok)
 
 
 def noticed_by(critter, tile: int) -> bool:
@@ -254,7 +320,7 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
 
     while time.monotonic() < end:
         s = actor.snap()
-        if s.screen == "main_menu" or (s.dude is not None and s.dude.hp <= 0):
+        if not alive(s):
             return done("died")
         if s.screen != "map":
             off_map_since = off_map_since or time.monotonic()
@@ -270,6 +336,10 @@ def hunt(actor: Actor, kind: str = "Radscorpion", minutes: float = 40) -> dict:
             began, healed_to = False, None
             if fought.reason == "refused; fled":
                 return done("fled a refused fight")
+            if not fought.ok:
+                return done(f"fight: {fought.reason}")
+            if not prepare_after_fight(actor):
+                return done("unsafe to continue after fight")
             continue
         left = foes_of(actor, kind)
         if len(left) < known:
@@ -428,15 +498,31 @@ def flee(actor: Actor, turns: int = 15) -> bool:
     """Out of a map by its nearest exit grid in spite of a fight: in combat each turn's AP go into steps toward it,
     and standing on the grid ends the combat and leaves (CE map_leave_map sets game_user_wants_to_quit in combat,
     map_check_state moves once it is over). An encounter need not be fought (a rule)."""
-    start = actor.snap().map_name
+    initial = actor.snap()
+    start = initial.map_name
+    requested_exits = (
+        nav.obstacles(actor.mem, initial.elevation, initial.dude.address).exits
+        if alive(initial) and initial.screen == "map"
+        else {}
+    )
     actor.log.emit("action_start", action="flee", map=start)
     still = 0  # combat turns in a row that moved nowhere: the way out is shut, fleeing more only loses the turns
     for _ in range(turns * 4):
         s = actor.snap()
-        if s.screen != "map" or s.map_name != start:
-            return actor._end(True, "fled", {"screen": s.screen, "map": s.map_name}, "flee").ok
-        if s.dude is None or s.dude.hp <= 0:
+        if not alive(s):
             return actor._end(False, "died", {}, "flee").ok
+        if (
+            s.screen == "worldmap"
+            and not actor.in_combat()
+            and (initial.screen == "worldmap" or nav.exit_arrival(actor, s, requested_exits))
+        ):
+            return actor._end(True, "fled", {"screen": s.screen, "map": s.map_name}, "flee").ok
+        if s.screen == "map" and s.map_name != start and nav.exit_arrival(actor, s, requested_exits):
+            return actor._end(True, "fled", {"screen": s.screen, "map": s.map_name}, "flee").ok
+        if s.screen != "map":
+            return actor._end(False, f"escape interrupted by {s.screen}", {}, "flee").ok
+        if s.map_name != start:
+            return actor._end(False, "escape destination not verified", {}, "flee").ok
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
         exits = {t for t, (to_map, _t, _e) in obs.exits.items() if to_map < 0} or set(obs.exits)
         if not exits:
@@ -449,10 +535,13 @@ def flee(actor: Actor, turns: int = 15) -> bool:
             win32.wait_for(lambda: actor.my_turn() or not actor.in_combat() or actor.snap().screen != "map", 30, 0.1)
             continue
         walked = s.dude.ap > 0 and actor.combat_walk(exits, s.dude.ap).ok
+        after = actor.snap()
+        if not alive(after) or after.screen != "map" or after.map_name != start:
+            continue
         still = 0 if walked else still + 1
         if still >= 3:
             return actor._end(False, "no way out", {}, "flee").ok
-        if (not walked or actor.snap().dude.ap <= 0) and actor.my_turn():
+        if (not walked or after.dude.ap <= 0) and actor.my_turn():
             actor.end_turn()
     return actor._end(False, "still here", {}, "flee").ok
 
@@ -466,28 +555,83 @@ PACK = 4
 DEADLY = ("Mutant", "Deathclaw", "Nightkin")
 
 
+def _visit_destination(town: str, section: int) -> tuple[str, int | None]:
+    """The requested map; its entrance script can override the map header's elevation."""
+    return worldmap.SECTIONS[town][section], None
+
+
+def _visit_arrived(actor: Actor, destination: tuple[str, int | None]) -> bool:
+    s = actor.snap()
+    name, elevation = destination
+    return bool(
+        alive(s)
+        and s.screen == "map"
+        and not actor.in_combat()
+        and s.map_name.split(".")[0] == name
+        and (elevation is None or s.elevation == elevation)
+    )
+
+
+def _finish_visit_entry(actor: Actor, town: str, section: int, destination: tuple[str, int | None]) -> str:
+    """An unavailable town entrance falls back to a known town map; reach the requested destination by local ways."""
+    from f1 import ways
+
+    s = actor.snap()
+    detail = {
+        "town": town,
+        "section": section,
+        "entered": s.map_name,
+        "entered_elevation": s.elevation,
+        "requested": destination[0],
+        "requested_elevation": destination[1],
+    }
+    if not alive(s) or s.screen != "map" or s.map_name.split(".")[0] not in worldmap.SECTIONS[town]:
+        return actor._end(False, "entry destination not verified", detail, "visit").reason
+    if actor.in_combat():
+        fought = actor.fight(forced=True)
+        if not fought.ok or not prepare_after_fight(actor):
+            return actor._end(False, "arrival fight did not end safely", detail, "visit").reason
+    if not _visit_arrived(actor, destination):
+        actor.log.emit("visit_entry_fallback", **detail)
+        goal = destination if destination[1] is not None else destination[0]
+        reached = ways.go(actor, goal)
+        if not reached.ok:
+            return actor._end(False, f"could not reach requested entrance: {reached.why}", detail, "visit").reason
+    s = actor.snap()
+    ok = _visit_arrived(actor, destination)
+    return actor._end(ok, s.map_name if ok else "entry destination not verified", detail, "visit").reason
+
+
 def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: bool = False) -> str:
     """From the world map: travel to a town and enter its entrance `section`. Random encounters on the way are
     fought (when hostile) and left by the map's edge, each taking two or three tries (the Glow to the Brotherhood
     met six in a row and ran out of 16, two full runs at Full HD: 40);
     without a gun, with `flee_all`, or against PACK foes or more, they are fled instead. Returns the map entered, or what stopped the trip."""
     tx, ty = worldmap.town_xy(town)
+    destination = _visit_destination(town, section)
     actor.log.emit("action_start", action="visit", town=town, section=section)
     why = "no try"
     for _ in range(tries):
         if actor.skip_cinema():  # the Cathedral's end plays on the world map as the trip starts
             continue
         s = actor.snap()
+        if not alive(s):
+            return actor._end(False, "no living player on the trip", {}, "visit").reason
         if s.screen == "dialogue":  # someone speaks up on arrival (Adytum's guard about a drawn gun): answer, go on
             close_dialogue(actor)
             continue
         if s.screen == "map" and not s.map_name:  # between a fled map and the world map (a full run)
             win32.wait_for(lambda: actor.snap().screen != "map" or bool(actor.snap().map_name), 5, 0.2)
             continue
-        if s.screen == "map" and s.map_name.split(".")[0] in worldmap.SECTIONS[town][section : section + 1]:
+        if s.screen == "map" and s.map_name.split(".")[0] in worldmap.SECTIONS[town]:
+            if actor.in_combat():
+                fought = actor.fight(forced=True)
+                if not fought.ok or not prepare_after_fight(actor):
+                    return actor._end(False, "arrival fight did not end safely", {}, "visit").reason
+                continue
             # arrived, though the entry itself looked failed: Junktown's gate guard spoke up at once about the drawn
             # gun, the talk was closed, and this loop walked out of the town again, 13 times
-            return actor._end(True, s.map_name, {"town": town, "after_talk": True}, "visit").reason
+            return _finish_visit_entry(actor, town, section, destination)
         if s.screen == "map":  # an encounter (or we are already somewhere): fight or flee, then out by the edge
             encounter = s.map_name.split(".")[0] not in worldmap.SECTIONS[town]
             if encounter:  # not in the town itself: guards stop guns
@@ -500,13 +644,17 @@ def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: 
             if encounter and (flee_all or not actor.armed() or pack >= PACK or deadly):  # out by the nearest exit
                 if not flee(actor):
                     s = actor.snap()
-                    alive = s.dude is not None and s.dude.hp > 0 and s.screen == "map"
-                    if not (alive and actor.in_combat() and actor.armed() and actor.fight().ok):  # no way out: fight
+                    living_map = alive(s) and s.screen == "map"
+                    if not (
+                        living_map and actor.in_combat() and actor.armed() and actor.fight(forced=True).ok
+                    ):  # no way out: fight
                         return actor._end(False, "could not flee an encounter", {}, "visit").reason
+                    if not prepare_after_fight(actor):
+                        return actor._end(False, "unsafe to continue after escape fight", {}, "visit").reason
                 continue
             # an encounter's fight is weighed by the gate like any a foe started, and left by the edge when refused
             # (an ironman run: radscorpions on the road to Junktown fought unweighed, death 0.29)
-            fought = actor.fight(forced=encounter) if actor.in_combat() else None
+            fought = actor.fight(forced=True) if actor.in_combat() else None
             if fought is not None and fought.reason == "refused; fled":
                 continue
             if fought is not None and not fought.ok:
@@ -516,10 +664,15 @@ def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: 
                 continue  # the fight stopped to keep the Agent alive: fled
             if encounter:  # loot: the fallen's ammunition and medicine, before going on
                 loot.sweep(actor, max_hexes=25, budget_s=60)
-                mend_on_the_road(actor)  # poison and wounds before more days of travel
+                if not mend_on_the_road(actor):  # poison and wounds before more days of travel
+                    return actor._end(False, "unsafe to travel after fight", {}, "visit").reason
             if not leave_map(actor):
                 return actor._end(False, "could not leave an encounter map", {}, "visit").reason
             continue
+        if s.screen != "worldmap":
+            return actor._end(False, f"travel interrupted by {s.screen}", {}, "visit").reason
+        if poison(actor) >= POISON_MATTERS or s.dude.hp <= poison(actor):
+            return actor._end(False, "unsafe to travel while poisoned", {}, "visit").reason
         why = worldmap.travel(actor.pid, tx, ty)
         if why == "town map":  # a town's map: ours means pick the entrance, another means out to the world map
             if actor.mem.glob("our_town") != worldmap.town_index(town):
@@ -530,16 +683,18 @@ def visit(actor: Actor, town: str, section: int = 0, tries: int = 40, flee_all: 
             screen = worldmap.enter_here(actor.pid, section)
             if screen == "map" or win32.wait_for(lambda: actor.snap().screen == "map", 30, 0.25):
                 time.sleep(1.5)
-                name = actor.snap().map_name
-                return actor._end(True, name, {"town": town}, "visit").reason
+                return _finish_visit_entry(actor, town, section, destination)
             why = f"did not enter ({screen})"
         elif why.startswith("interrupted"):
             win32.wait_for(lambda: actor.snap().screen == "map", 30, 0.25)
             time.sleep(1.5)
-            name = actor.snap().map_name
+            arrival = actor.snap()
+            if not alive(arrival):
+                return actor._end(False, "no living player after travel", {}, "visit").reason
+            name = arrival.map_name
             # a first visit enters the town's first map by itself (worldmap.c: no town map yet): arrived, not waylaid
-            if name.split(".")[0] == worldmap.SECTIONS[town][section]:
-                return actor._end(True, name, {"town": town, "first_visit": True}, "visit").reason
+            if name.split(".")[0] in worldmap.SECTIONS[town]:
+                return _finish_visit_entry(actor, town, section, destination)
             actor.log.emit("encounter", map=name)
     return actor._end(False, why, {"town": town}, "visit").reason
 
@@ -602,9 +757,11 @@ def use_scenery(actor: Actor, names: tuple[str, ...], done, what: str, timeout_s
     if geometry.distance(thing.tile, s.dude.tile) > 1:  # right beside it: from 3 hexes the Hotel's hole never took
         obs = nav.obstacles(actor.mem, s.elevation, s.dude.address)
         beside = {t for t in geometry.ring(thing.tile, 1) if t not in obs.blocked}
-        nav.go_to(
+        reached, why = nav.go_to(
             actor, beside or {t for r in (2, 3) for t in geometry.ring(thing.tile, r) if t not in obs.blocked}, 60
         )
+        if not reached:
+            return actor._end(False, f"could not approach {what}: {why}", {}, "use_scenery").ok
     # clicked where the cursor names it (a bookcase over MSTRLR12's stairs took blind clicks), else blind as before;
     # its namesakes on its hex count too: the rope on the Glow's beam is a second "Beam" its script lays over the
     # first (GENT2LV1.INT create_object_sid), and the aimed pass spent its 40 s there in every run (inferred: the
@@ -650,7 +807,7 @@ def ride_from(actor: Actor, tile: int, key: str, avoid: frozenset[int] = frozens
 
     def moved() -> bool:
         s = actor.snap()
-        return s.screen == "map" and (s.elevation != s0.elevation or s.map_name != s0.map_name)
+        return alive(s) and s.screen == "map" and (s.elevation != s0.elevation or s.map_name != s0.map_name)
 
     time.sleep(0.4)
     if key.isalpha():  # 'G' (ground) is a capital in keytable: typed with Shift ('g' did nothing, live)

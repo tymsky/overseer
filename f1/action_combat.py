@@ -1,5 +1,8 @@
 """Attacks, combat movement and fight decisions for the public Actor."""
 
+import struct
+import uuid
+
 from f1 import (
     clock,
     geometry,
@@ -47,6 +50,7 @@ LONG_SHOT = 5  # percent: after STALL_TURNS turns with nothing done a shot this 
 STALL_TURNS = 2  # turns without a shot, a step or a heal before the fight takes long shots, then steps back
 PACK_HEXES = 8  # a foe without a gun with another foe this near it is waited for, not closed in on
 AIM_BLOCKED = ("COMBAT", 104)  # a shot whose line of fire is blocked (COMBAT.MSG)
+ENGAGING = 1  # object_types.h CRITTER_MANEUVER_ENGAGING; combatai_want_to_join
 
 
 def retreat_hex(
@@ -97,17 +101,58 @@ class CombatActions:
         dude = self.mem.u32(em.GLOBALS["obj_dude"].address)
         return self.in_combat() and self.mem.u32(COMBAT_TURN_OBJ) == dude and self.mem.glob("combat_turn_running") == 0
 
+    def combat_order(self) -> tuple[int, ...]:
+        """The engine's active combat prefix, in actual turn order (combat.cc list_com)."""
+        if getattr(self, "mem", None) is None or not self.in_combat():
+            return ()
+        count, address = self.mem.glob("list_com"), self.mem.glob("combat_list")
+        if not 0 <= count <= 1000 or (count and not address):
+            raise ReadError("invalid active combat list")
+        return struct.unpack(f"<{count}I", self.mem.read(address, count * 4)) if count else ()
+
     def enemies(self, only: tuple[str, ...] | None = None) -> list[state.Critter]:
-        """Critters to fight: wild kinds (by name) or anyone who hit the player. Never other teams by team alone:
-        townsfolk are another team and must not be shot."""
-        dude = self.snap().dude
+        """Known wild foes and observed hostile factions, including participants and possible onlookers.
+        A combatant on a different team can be fighting for the player. Seed a faction from actual player-team
+        who-hit links or deliberate targets, then include its joiners. ONLY limits deliberate targets; risk also
+        observes every active foe of those hostile factions.
+        """
+        snap = self.snap()
+        dude = snap.dude
+        active = set(self.combat_order())
+        combat = bool(active)
+        context = (getattr(snap, "map_name", ""), dude.elevation)
+        if not combat or context != getattr(self, "_combat_hostile_context", None):
+            self._combat_hostile_teams = set()
+            self._combat_hostile_context = context
+        crew = [c for c in state.critters(self.mem) if c.elevation == dude.elevation]
+        by_address = {c.address: c for c in [*crew, dude]}
+        hit_by = {c.address: self.mem.u32(c.address + Obj.CRITTER_WHO_HIT_ME) for c in by_address.values()}
+        player_team = {c.address for c in by_address.values() if c.team == dude.team and not c.dead}
+        player_hit = {hit_by[address] for address in player_team}
+        targets = getattr(self, "_combat_targets", set()) if combat else set()
+        hostile = self._combat_hostile_teams
+        names = {c.address: knowledge.proto_name(c.pid) for c in crew}
+        wild = {
+            c.address
+            for c in crew
+            if any(k in names[c.address] for k in HOSTILE_KINDS) or names[c.address] in HOSTILE_EXACT
+        }
+        # Retain the attacker's faction after its death: its living household may already be taking turns.
+        for address in player_hit | targets:
+            if (c := by_address.get(address)) is not None and c.team != dude.team:
+                hostile.add(c.team)
+        for c in crew:
+            if c.team != dude.team and hit_by[c.address] in player_team:
+                hostile.add(c.team)
+            if c.address in wild and c.address in active:
+                hostile.add(c.team)
         out = []
-        for c in state.critters(self.mem):
+        for c in crew:
             if c.address == dude.address or c.dead or c.hp <= 0:
                 continue
             if c.team == dude.team or c.elevation != dude.elevation:  # companions; other floors of the map
                 continue
-            name = knowledge.proto_name(c.pid)
+            name = names[c.address]
             if only is not None:  # a fight with named opponents only (Garl's fistfight among neutral raiders)
                 # "script:NAME" picks by the critter's script: the Raiders' Gwen and Alya are "Citizen" like the
                 # plain raiders, and must be left for the fight in Garl's room (the raiders plan)
@@ -115,13 +160,14 @@ class CombatActions:
                 if any(k[7:] == script if k.startswith("script:") else k in name for k in only):
                     out.append(c)
                 continue
-            who_hit = self.mem.u32(c.address + Obj.CRITTER_WHO_HIT_ME)
-            if any(k in name for k in HOSTILE_KINDS) or name in HOSTILE_EXACT or who_hit == dude.address:
+            direct = hit_by[c.address] in player_team or c.address in player_hit or c.address in targets
+            if c.address in wild or direct or (combat and c.team in hostile):
                 out.append(c)
         return out
 
     def attack(self, target: state.Critter) -> Outcome:
         """One attack with the active item on a target (adjacent for fists, in range for a gun); done when over."""
+        self._combat_action("attack", target=target.address)
         self.still_view()  # a following view still gliding after the last step would carry the aim away
         s = self.snap()
         pre = {"target": target.address, "target_tile": target.tile, "target_hp": target.hp, "ap": s.dude.ap}
@@ -251,7 +297,11 @@ class CombatActions:
         if not left:
             return [], []
         at = self.snap().dude.tile
-        group = [c for c in left if perception.notices(c.tile, c.rotation, perception.perception_of(c.pid), at)]
+        active = set(self.combat_order())
+        group = [c for c in left if c.address in active]
+        group = group or [
+            c for c in left if perception.notices(c.tile, c.rotation, perception.perception_of(c.pid), at)
+        ]
         group = group or [min(left, key=lambda c: geometry.distance(c.tile, at))]
         return group, [c for c in left if c not in group]
 
@@ -285,10 +335,12 @@ class CombatActions:
             "odds", foes=len(group), others=len(others), win=round(chance.win, 3), hp_left=round(chance.hp_left, 1),
             turns=round(chance.turns, 1), rounds=round(chance.rounds, 1), hit=chance.hit, foe_hit=chance.foe_hit,
             death_high=chance.death_high, rule=odds.RULE, forced=True, accept=odds.accepted(chance, FORCED_FLOOR),
+            encounter_id=getattr(self, "_encounter_id", None),
         )  # fmt: skip
         return chance
 
     def end_turn(self) -> Outcome:
+        self._combat_action("end_turn")
         self.log.emit("action_start", action="end_turn", ap=self.snap().dude.ap)
         session.press("space")
         with clock.fast(self.pid):
@@ -303,6 +355,126 @@ class CombatActions:
         spare: frozenset[str] = frozenset(),
         forced: bool = False,
     ) -> Outcome:
+        """Execute one encounter, preserving its identity across bounded resumptions."""
+        if not self.in_combat() and not getattr(self, "_encounter_id", None):
+            s = self.snap()
+            dead = s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or getattr(s.dude, "dead", False)
+            return self._end(not dead, "died" if dead else "combat over", {"screen": s.screen}, "fight")
+        if not getattr(self, "_encounter_id", None):
+            self._encounter_id = uuid.uuid4().hex
+            self._combat_targets = set()
+            self.log.emit("encounter_start", encounter_id=self._encounter_id, forced=forced, only=only)
+        encounter = self._encounter_id
+        try:
+            out = self._fight(max_rounds, min_hp, only, spare, forced)
+        except BaseException as exc:
+            self.log.emit("encounter_end", encounter_id=encounter, outcome="interrupted", error=type(exc).__name__)
+            self._encounter_id = None
+            raise
+        terminal = out.reason in ("combat over", "died", "refused; fled")
+        self.log.emit(
+            "encounter_end" if terminal else "encounter_pause",
+            encounter_id=encounter,
+            outcome=out.reason,
+            ok=out.ok,
+            detail=out.detail,
+        )
+        if terminal:
+            self._encounter_id = None
+            self._combat_hostile_teams = set()
+            self._combat_hostile_context = None
+            self._combat_targets = set()
+        return Outcome(out.ok, out.reason, out.detail | {"encounter_id": encounter})
+
+    def _combat_action(self, action: str, **detail) -> None:
+        if encounter := getattr(self, "_encounter_id", None):
+            s = self.snap()
+            self.log.emit(
+                "encounter_action",
+                encounter_id=encounter,
+                action=action,
+                hp=s.dude.hp if s.dude else None,
+                ap=s.dude.ap if s.dude else None,
+                tile=s.dude.tile if s.dude else None,
+                **detail,
+            )
+
+    def _combat_signature(self, s, group: list, others: list) -> tuple:
+        """Only observed decision inputs; an unsuccessful click does not itself clear target exclusions."""
+        from f1 import loot
+
+        def equipment(address: int) -> tuple:
+            if getattr(self, "mem", None) is None:
+                return ()
+            return tuple(
+                (pid, self.mem.i32(item + Obj.ITEM_AMMO), qty, self.mem.u32(item + Obj.FLAGS))
+                for item, pid, qty in loot.inventory(self.mem, address)
+            )
+
+        def observed(c) -> tuple:
+            return (
+                c.address,
+                c.tile,
+                c.hp,
+                getattr(c, "ap", 0),
+                getattr(c, "rotation", 0),
+                getattr(c, "results", 0),
+                equipment(c.address),
+            )
+
+        stats = tuple(odds.player_stats(self.mem)) if getattr(self, "mem", None) is not None else ()
+        blockers = ()
+        if getattr(self, "mem", None) is not None:
+            obstacles = nav.obstacles(self.mem, s.elevation, s.dude.address)
+            blockers = (frozenset(obstacles.blocked), frozenset(obstacles.passable_doors))
+        return (
+            getattr(s, "map_name", ""),
+            getattr(s, "elevation", 0),
+            s.dude.tile,
+            s.dude.hp,
+            s.dude.ap,
+            stats,
+            blockers,
+            self.weapon(),
+            self._count(PID_STIMPAK),
+            equipment(getattr(s.dude, "address", 0)),
+            tuple(observed(c) for c in group),
+            tuple(observed(c) for c in others),
+        )
+
+    def _safe_combat_prefix(self, path: list[int]) -> list[int]:
+        """Stop before a step newly enters an excluded onlooker's combat perception."""
+        excluded = getattr(self, "_combat_onlookers", ())
+        if not path or not excluded:
+            return path
+        safe = [path[0]]
+        for tile in path[1:]:
+            activated = [
+                c.address
+                for c in excluded
+                if not perception.notices(c.tile, c.rotation, perception.perception_of(c.pid), path[0], in_combat=True)
+                and perception.notices(c.tile, c.rotation, perception.perception_of(c.pid), tile, in_combat=True)
+            ]
+            if activated:
+                self.log.emit(
+                    "tactic",
+                    move="avoid activating onlookers",
+                    tile=tile,
+                    foes=activated,
+                    encounter_id=getattr(self, "_encounter_id", None),
+                )
+                break
+            safe.append(tile)
+        return safe
+
+    def _fight(
+        self,
+        max_rounds: int,
+        min_hp: int,
+        only: tuple[str, ...] | None,
+        spare: frozenset[str],
+        forced: bool,
+    ) -> Outcome:
         """Fight until combat is over: shoot the nearest foe in range with a gun (or punch an adjacent one), heal
         with a stimpak below risk.heal_below, end the turn when nothing more can be done. `spare`: scripts of critters that
         must not be hit: a foe with one of them beyond it on the line of fire is not shot (a missed shot flies on
@@ -311,6 +483,7 @@ class CombatActions:
         refuse is left by the map's nearest exit (quests.flee, as Fallout 2's way out of a forced fight) while
         `leave_refused`; when no way out is found it is fought."""
         self.log.emit("action_start", action="fight", forced=forced)
+        self._combat_targets = {c.address for c in self.enemies(only)} if only is not None else set()
         # a forced fight's weighed foes: the fight steps towards no other (an onlooker comes by itself, or not at
         # all; the radscorpion caves, an ironman run: the weighed one's shot blocked, eight hexes towards one the
         # gate had not counted, both stung and the player died)
@@ -338,25 +511,59 @@ class CombatActions:
         # a Guard behind a door frame came first every turn, "aim blocked", while Vinnie in the doorway was
         # never shot at; 60 turns)
         blocked_before: set[int] = set()
+        assessed = None
         for _ in range(max_rounds * 4):
             if rounds >= max_rounds:
                 break
             now = self.snap()
-            if now.screen == "main_menu" or now.dude is None or now.dude.hp <= 0:
+            if now.screen == "main_menu" or now.dude is None or now.dude.hp <= 0 or getattr(now.dude, "dead", False):
                 return self._end(False, "died", {"screen": now.screen}, "fight")
             if not self.in_combat():
                 return self._end(True, "combat over", {"hp": now.dude.hp}, "fight")
             # my turn, or the end of combat (after the last kill the foes' turns ran out and the wait lasted 45 s)
             with clock.fast(self.pid):  # the foes' turns
                 came = win32.wait_for(lambda: self.my_turn() or not self.in_combat(), 45, 0.1)
+            s = self.snap()
+            if s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or getattr(s.dude, "dead", False):
+                return self._end(False, "died", {"screen": s.screen}, "fight")
             if not came:
                 return self._end(False, "my turn did not come", {}, "fight")
             if not self.in_combat():
                 continue
-            s = self.snap()
+            # One accepted estimate is not permission for a changed fight. Re-observe at every decision;
+            # participant moves, joins/deaths, equipment, lost HP and depleted supplies invalidate the estimate.
+            group, others = self.forced_group()
+            weighed = {c.address for c in group} or weighed
+            self._combat_onlookers = others
+            signature = self._combat_signature(s, group, others)
+            if signature != assessed and group:
+                assessed = signature
+                chance = odds.assess(self, group, others)
+                self.log.emit(
+                    "encounter_risk",
+                    encounter_id=self._encounter_id,
+                    foes=[c.address for c in group],
+                    others=[c.address for c in others],
+                    initial_ap=s.dude.ap,
+                    hp=s.dude.hp,
+                    death_high=chance.death_high,
+                    win=chance.win,
+                    accept=odds.accepted(chance, FORCED_FLOOR),
+                    rule=odds.RULE,
+                )
+                if not odds.accepted(chance, FORCED_FLOOR) and self.leave_refused:
+                    from f1 import quests
+
+                    if quests.flee(self):
+                        return self._end(False, "refused; fled", {"death_high": chance.death_high}, "fight")
+                    self.log.emit("tactic", move="fight a refused fight", why="no way out")
+                # Target failures only describe the geometry/equipment where they were observed.
+                missed.clear()
+                stuck_at.clear()
+                blocked_before.clear()
             # half the HP, or the near foes' turn of hits when more (risk.heal_below; two radscorpion stings took
             # 22 of a level-2 player's 23, no stimpak used: an ironman run)
-            below = risk.heal_below(self.max_hp, risk.danger(self, self.enemies(only), s.dude.tile))
+            below = risk.heal_below(self.max_hp, risk.danger(self, self.enemies(), s.dude.tile))
             low = s.dude.hp < below and s.dude.ap >= 4 and self._count(PID_STIMPAK) > 0
             if low and self.use_on_self(PID_STIMPAK).ok:  # heal first: 4 AP for the screen still leaves a shot
                 acted = rounds
@@ -375,7 +582,13 @@ class CombatActions:
             if near and not geometry.on_view(near[0].tile, s.camera, 24):
                 nav.scroll_towards(self, near[0].tile)  # the camera does not follow the player: bring it over
                 s = self.snap()
-            in_reach = [e for e in near if geometry.on_view(e.tile, s.camera, 16) and missed.get(e.address, 0) < 2]
+            in_reach = [
+                e
+                for e in near
+                if geometry.on_view(e.tile, s.camera, 16)
+                and missed.get(e.address, 0) < 2
+                and (weighed is None or e.address in weighed)
+            ]
             if spare and held and weapons.attack_type(held.pid) == "ranged":
                 kept = [e for e in in_reach if not self._spared_behind(e, spare, s, reach)]
                 if len(kept) < len(in_reach):
@@ -525,6 +738,7 @@ class CombatActions:
         """In my combat turn: walk up to `max_hexes` along our path towards `tile` (a click in move mode; each hex
         costs 1 AP). Done when the player stands still on the chosen hex or stops early."""
         self.still_view()  # a following view still gliding after the last step would carry the aim away
+        self._combat_action("move_towards", towards=tile, max_hexes=max_hexes)
         s = self.snap()
         pre = {"from": s.dude.tile, "towards": tile, "max": max_hexes, "ap": s.dude.ap}
         self.log.emit("action_start", action="combat_move", **pre)
@@ -538,7 +752,11 @@ class CombatActions:
             path = nav.astar(s.dude.tile, beside - blocked or {tile}, blocked)
             if not path or len(path) < 2:
                 return self._end(False, "no path", pre | {"refused": sorted(refused)}, "combat_move")
-            target = path[min(max_hexes, len(path) - 1)]
+            path = self._safe_combat_prefix(path[: max_hexes + 1])
+            if len(path) < 2:
+                return self._end(False, "would activate onlooker", pre, "combat_move")
+            # With excluded observers, adjacent clicks keep the engine from choosing a different long path.
+            target = path[1] if getattr(self, "_combat_onlookers", ()) else path[-1]
             if not geometry.on_view(target, s.camera, 24):
                 nav.scroll_towards(self, target)
                 s = self.snap()
@@ -562,6 +780,7 @@ class CombatActions:
         """In my combat turn: up to `max_hexes` along our path onto one of `goals` (an exit grid: standing on it ends
         the combat and leaves the map, CE map_leave_map), to the farthest of those hexes on the view."""
         self.still_view()  # a following view still gliding after the last step would carry the aim away
+        self._combat_action("walk", goals=sorted(goals), max_hexes=max_hexes)
         s = self.snap()
         pre = {"from": s.dude.tile, "goals": len(goals), "max": max_hexes, "ap": s.dude.ap}
         self.log.emit("action_start", action="combat_walk", **pre)
@@ -569,6 +788,13 @@ class CombatActions:
         path = nav.astar(s.dude.tile, goals, obs.passable_doors)
         if not path or len(path) < 2:
             return self._end(False, "no path", pre, "combat_walk")
+        exiting = path[-1] in obs.exits
+        if not exiting:
+            path = self._safe_combat_prefix(path[: max_hexes + 1])
+            if len(path) < 2:
+                return self._end(False, "would activate onlooker", pre, "combat_walk")
+            if getattr(self, "_combat_onlookers", ()):
+                path = path[:2]
         i = nav.next_step(path, s.camera, max_hexes=max_hexes, margin=8)
         if i is None:
             nav.scroll_towards(self, path[min(max_hexes, len(path) - 1)])
@@ -587,7 +813,12 @@ class CombatActions:
                 break
         win32.wait_for(lambda: self.mem.glob("combat_turn_running") == 0, 4, 0.05)
         after = self.snap()
-        moved = after.screen != "map" or (after.dude is not None and after.dude.tile != s.dude.tile)
+        alive = after.dude is not None and not after.dude.dead and after.dude.hp > 0
+        moved = (
+            alive
+            and after.screen in ("map", "worldmap", "townmap")
+            and (after.screen != "map" or after.dude.tile != s.dude.tile)
+        )
         detail = pre | {"to": path[i], "at": after.dude.tile if after.dude else None}
         return self._end(moved, "moved" if moved else "did not move", detail, "combat_walk")
 

@@ -28,8 +28,8 @@ One attack (fallout1-ce combat.c, static analysis; `to_hit`, `_table`):
 Death: the hit points at 0 or below, or a critical row's DAM_DEAD (with its massive part when a d10 beats the stat).
 
 The player (Actor.fight's rules): at his turn's start a stimpak (the inventory's 4 AP each, 10 to 20 hit points: the
-proto's drug data) while his hit points are under `heal_below`: half of them, or what the foes near him can take
-in one turn of plain hits when that is more; then the weakest foe in reach first (fewest hit points, then
+proto's drug data) while his hit points are under `heal_below`: half of them, or the reachable foes' damage
+allowance including the measured critical tables' upper tail when that is more; then the weakest foe in reach first (fewest hit points, then
 nearest), the nearest when none is; a melee weapon or fists walk to it (1 AP a hex); a gun out of reach walks into
 reach, and closes in on a foe with no gun while its to-hit is under GOOD_SHOT; a gun reloads when empty (2 AP) and
 fights with fists when the pack is dry; the AP left count as his AC until his next turn.
@@ -38,7 +38,8 @@ fight for good); one whose to-hit even without the range modifier is under min_t
 min_to_hit it walks closer (1 AP a hex, at most to the next hex); in reach it attacks while its AP pay, the hit mode
 picked once a turn (the secondary 1 in secondary_freq), each single attack a called shot by its packet
 (aipacket.called_locations; 1 AP more off the torso); a gun reloads from its pack (2 AP) and fights with fists after.
-The rounds: the first is the player's turn, then the foes in the fight; each later one in Sequence order, then Luck,
+The rounds: a fresh first turn is the player's, then the foes; an observed turn uses its remaining AP and only
+the foes still to act in the engine's current turn list. Each later round is in Sequence order, then Luck,
 highest first (combat.c compare_faster; a tie counted for the foes). A joiner (`Fighter.joins`: the round at whose end
 it joins) acts at once (combat_add_noncoms).
 
@@ -60,8 +61,8 @@ import random
 import sys
 from bisect import bisect_right
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from functools import cache
+from dataclasses import asdict, dataclass, field, replace
+from functools import cache, lru_cache
 
 from f1 import aipacket, crit_tables, odds
 
@@ -163,12 +164,14 @@ class Fighter:
     light: int = odds.LIGHT_MAX  # the light at its tile (the player's shots at it)
     ap_left: int = 0  # AP kept from its last turn (its AC bonus on the player's first turn)
     stimpaks: int = 0  # the player's
+    initial_ap: int | None = None  # remaining AP of the observed turn; None: a fresh full turn
 
 
 @dataclass(frozen=True)
 class Rules:
     difficulty: int = 1  # combat difficulty: 0 Wimpy, 1 Normal, 2 Rough
     game_time: int = GAME_DAY  # ticks; criticals only from GAME_DAY on
+    first_foes: tuple[int, ...] | None = None  # foe indices still to act in the observed player's turn
 
     @property
     def criticals(self) -> bool:
@@ -481,20 +484,87 @@ def heal_below(max_hp: int, danger: int) -> float:
     return max(max_hp / 2, min(danger, max_hp - STIMPAK_HEAL[0]))
 
 
+@lru_cache(maxsize=4096)
+def turn_threat(f: Fighter, me: Fighter, rules: Rules) -> int:
+    """A reachable foe's next-turn damage allowance. Keep the plain maximum, and include the 95th percentile
+    of the measured attack tables (armour bypass, called shots and instant death included). The percentile is a
+    healing policy, not a confidence bound on survival. Movement and reload consume the foe's actual attack AP.
+    Taking the more dangerous usable mode is conservative when its packet randomly selects a secondary mode.
+    """
+    best = 0
+    modes = [(f.weapon, f.skill)]
+    if f.secondary is not None and f.secondary.kind != "throw":
+        modes.append((f.secondary, f.secondary_skill))
+    for w, skill in modes:
+        ap, dist, loaded, reserve = f.ap, f.dist, f.loaded, f.spare
+        if w.capacity and loaded == 0:
+            if f.spare:
+                ap -= RELOAD_AP
+                loaded = min(w.capacity, f.spare)
+                reserve -= loaded
+            else:
+                w, skill, loaded = FISTS, f.unarmed_skill, None
+        # ai_try_attack walks to the adjacent hex when out of range.
+        if dist > w.reach:
+            steps = max(0, dist - 1)
+            ap, dist = ap - steps, dist - steps
+        attacks = max(0, ap) // max(1, w.ap)
+        if loaded is not None and w.capacity:
+            left, spare, attack_ap, attacks = loaded, reserve, ap, 0
+            # A partially loaded burst still fires; reloads may also allow another attack this turn.
+            while attack_ap >= w.ap:
+                if left == 0:
+                    if spare <= 0 or attack_ap < RELOAD_AP + w.ap:
+                        break
+                    take = min(w.capacity, spare)
+                    left, spare, attack_ap = take, spare - take, attack_ap - RELOAD_AP
+                left -= min(left, max(1, w.burst))
+                attacks, attack_ap = attacks + 1, attack_ap - w.ap
+        if not attacks:
+            continue
+        plain = w.max_damage + (f.melee if w.kind in ("unarmed", "melee") else 0)
+        tail = plain * DIFFICULTY_DAMAGE.get(rules.difficulty, 100) // 100
+        if rules.criticals or w.burst:
+            locations = {crit_tables.TORSO: 1.0}
+            if f.packet is not None and w.aimable and ap >= w.ap + 1:
+                locations = aipacket.called_locations(
+                    f.packet,
+                    f.special[4],
+                    rules.difficulty,
+                    True,
+                    lambda loc, w=w, skill=skill, dist=dist: to_hit(f, w, skill, me, dist, loc, False, rules),
+                )
+            outcomes: dict[int, float] = {}
+            for loc, p in locations.items():
+                rounds = min(w.burst, loaded or 0) if w.burst else 0
+                _, table = attack_table(f, w, skill, me, dist, loc, False, rules, rounds=rounds)
+                prev = 0.0
+                for cumulative, damage, dead in zip(table.cum, table.damage, table.dead, strict=True):
+                    damage = max(damage, me.max_hp) if dead else damage
+                    outcomes[damage] = outcomes.get(damage, 0.0) + p * (cumulative - prev)
+                    prev = cumulative
+            cumulative = 0.0
+            for damage, p in sorted(outcomes.items()):
+                cumulative += p
+                if cumulative >= 0.95:
+                    tail = max(tail, damage)
+                    break
+        best = max(best, attacks * tail)
+    return best
+
+
 def danger(actor, critters, tile: int) -> int:
-    """The live foes' `turn_damage` for those within NEAR of TILE (fists or their proto's weapon: a gun's holder
-    further off is left out)."""
-    from f1 import geometry
-
-    rules = Rules(actor.mem.glob("combat_difficulty"))
-    near = [c for c in critters if geometry.distance(c.tile, tile) - (1 if c.multihex else 0) <= NEAR]
-    return sum(turn_damage(foe(c.pid, 1, hp=c.hp), rules) for c in near)
+    """Damage allowance before the next heal: live weapons and any foe that can reach and attack next turn."""
+    me = player(actor)
+    rules = Rules(actor.mem.glob("combat_difficulty"), actor.mem.glob("fallout_game_time"))
+    return sum(turn_threat(live_foe(actor, c, tile), me, rules) for c in critters)
 
 
-def _player_turn(m: _Model, me: _Me, foes: list[_Foe], rng: random.Random) -> None:
+def _player_turn(m: _Model, me: _Me, foes: list[_Foe], rng: random.Random, initial: bool = False) -> None:
     f = m.me
-    ap = f.ap
-    near = sum(turn_damage(x.f, m.rules) for x in foes if x.active and not x.out and x.dist <= NEAR)
+    ap = f.ap if not initial or f.initial_ap is None else max(0, min(f.ap, f.initial_ap))
+    near = sum(turn_threat(replace(x.f, dist=x.dist, loaded=x.loaded, spare=x.spare, weapon=x.weapon), f, m.rules)
+               for x in foes if x.active and not x.out)  # fmt: skip
     while me.hp < heal_below(f.max_hp, near) and ap >= INVENTORY_AP and me.stimpaks > 0:
         ap -= INVENTORY_AP
         me.stimpaks -= 1
@@ -621,10 +691,11 @@ def _trial(m: _Model, rng: random.Random) -> tuple[str, int, int, int]:
         if f.joins is not None
     ]
     for rnd in range(1, MAX_ROUNDS + 1):
-        order: list[_Foe | None] = [None, *foes] if rnd == 1 else _order(m, foes)
+        remaining = foes if m.rules.first_foes is None else [foes[i] for i in m.rules.first_foes]
+        order: list[_Foe | None] = [None, *remaining] if rnd == 1 else _order(m, foes)
         for who in order:
             if who is None:
-                _player_turn(m, me, foes, rng)
+                _player_turn(m, me, foes, rng, initial=rnd == 1)
             elif who.active and not who.out:
                 _foe_turn(m, who, me, rng)
             if me.dead:
@@ -752,60 +823,99 @@ def foe(pid: int, dist: int, hp: int | None = None, packet: int | None = None, h
     )  # fmt: skip
 
 
+def player(actor) -> Fighter:
+    """Current combat hand and remaining AP; before combat, the prepared best weapon and a full opening turn."""
+    from f1 import weapons
+
+    mem, s = actor.mem, actor.snap()
+    st = odds.player_stats(mem)
+    combat = actor.in_combat()
+    options = [] if combat else actor.weapon_options()
+    o = options[0] if options else None
+    held = actor.weapon() if combat else None
+    pid = held.pid if held else o.pid if o else None
+    carried = next((c for c in actor.carried_weapons() if c.pid == pid), None)
+    w = weapon_of(pid, False, st[0])
+    skills = actor.skills()
+    skill = weapons.skill(pid) if pid is not None else "unarmed"
+    return Fighter(
+        name="player", hp=s.dude.hp, max_hp=actor.max_hp, ap=actor.max_ap, ac=st[odds.STAT_AC],
+        special=tuple(st[:7]), dt=tuple(st[17:24]), dr=tuple(st[24:31]),
+        skill=o.skill_value if o else skills.get(skill, 0), weapon=w, melee=st[odds.STAT_MELEE],
+        sequence=st[13], crit_chance=st[15], better_crits=st[16], kill_type=None,
+        loaded=(held.loaded if held else carried.loaded if carried else 0) if pid and weapons.uses_ammo(pid) else None,
+        spare=carried.spare if carried else 0, unarmed_skill=skills.get("unarmed", 0),
+        stimpaks=actor._count(0x28), initial_ap=max(0, s.dude.ap) if combat else None,
+    )  # fmt: skip
+
+
+def live_foe(actor, c, here: int, joins: int | None = 0) -> Fighter:
+    """An observed foe including its equipped gun and ammunition, shared by risk and healing."""
+    from f1 import geometry, loot, weapons
+    from f1.engine_map import Obj
+
+    mem = actor.mem
+    held, loaded, spare = None, None, 0
+    inventory = loot.inventory(mem, c.address)
+    for item, ipid, _ in inventory:
+        if mem.u32(item + Obj.FLAGS) & odds.IN_HAND and weapons.weapon(ipid):
+            held, loaded = ipid, mem.i32(item + Obj.ITEM_AMMO)
+    if held is not None and weapons.uses_ammo(held):
+        spare = sum(
+            (qty - 1) * ((knowledge_proto(ipid).get("ammo") or {}).get("quantity", 0)) + mem.i32(item + Obj.ITEM_AMMO)
+            for item, ipid, qty in inventory
+            if qty > 0 and weapons.fits(held, ipid)
+        )
+    return foe(
+        c.pid, max(1, geometry.distance(c.tile, here) - (1 if c.multihex else 0)), hp=c.hp,
+        packet=mem.i32(c.address + Obj.CRITTER_AI_PACKET), held=held, loaded=loaded, spare=spare, joins=joins,
+        big=c.multihex, light=odds.visible_light(mem, c.elevation, c.tile), ap_left=max(0, c.ap),
+    )  # fmt: skip
+
+
 def against(actor, foes: list, others: list = (), at: int | None = None) -> Risk:  # type: ignore[assignment]
-    """The risk of the player's best way to fight (weapons.choose) against these live critters, from where they stand
-    now (and the player at his tile, or AT: where he will arrive); OTHERS (hostile critters not in the fight yet)
-    join at the first round's end when they notice the player or the first foe (combatai.c
-    combatai_notify_onlookers, is_within_perception at combat's distances).
-    """
-    from f1 import geometry, loot, perception, weapons
+    """Risk from the observed turn, including active participants and onlookers that perceive any attacked foe."""
+    from f1 import perception
     from f1.engine_map import Obj
 
     mem, s = actor.mem, actor.snap()
     here = s.dude.tile if at is None else at
-    st = odds.player_stats(mem)
-    options = actor.weapon_options()
-    o = options[0] if options else None
-    pid = o.pid if o else None
-    carried = next((c for c in actor.carried_weapons() if c.pid == pid), None)
-    w = weapon_of(pid, False, st[0])
-    skills = actor.skills()
-    me = Fighter(
-        name="player", hp=s.dude.hp, max_hp=actor.max_hp, ap=actor.max_ap, ac=st[odds.STAT_AC],
-        special=tuple(st[:7]), dt=tuple(st[17:24]), dr=tuple(st[24:31]),
-        skill=o.skill_value if o else skills.get("unarmed", 0), weapon=w, melee=st[odds.STAT_MELEE],
-        sequence=st[13], crit_chance=st[15], better_crits=st[16], kill_type=None,
-        loaded=carried.loaded if carried and weapons.uses_ammo(pid) else None,
-        spare=carried.spare if carried else 0, unarmed_skill=skills.get("unarmed", 0),
-        stimpaks=actor._count(0x28),
-    )  # fmt: skip
-
-    def live(c, joins: int | None) -> Fighter:
-        held, loaded, spare = None, None, 0
-        for item, ipid, qty in loot.inventory(mem, c.address):
-            if mem.u32(item + Obj.FLAGS) & odds.IN_HAND and weapons.weapon(ipid):
-                held, loaded = ipid, mem.i32(item + Obj.ITEM_AMMO)
-        if held is not None and weapons.uses_ammo(held):
-            spare = sum(
-                qty * ((knowledge_proto(ipid).get("ammo") or {}).get("quantity", 0))
-                for _, ipid, qty in loot.inventory(mem, c.address)
-                if weapons.fits(held, ipid)
-            )
-        return foe(
-            c.pid, geometry.distance(c.tile, here) - (1 if c.multihex else 0), hp=c.hp,
-            packet=mem.i32(c.address + Obj.CRITTER_AI_PACKET), held=held, loaded=loaded, spare=spare, joins=joins,
-            big=c.multihex, light=odds.visible_light(mem, c.elevation, c.tile), ap_left=max(0, c.ap),
-        )  # fmt: skip
-
-    first = foes[0] if foes else None
-    them = [live(c, 0) for c in foes]
+    me = player(actor)
+    active = actor.combat_order() if actor.in_combat() else ()
+    if active:
+        # A deliberate named target cannot hide other combatants that have already joined.
+        known = {c.address: c for c in [*foes, *others, *actor.enemies()]}
+        participants = [known[address] for address in active if address in known]
+        if participants:
+            foes = participants
+            others = [c for c in known.values() if c.address not in set(active)]
+    them = [live_foe(actor, c, here) for c in foes]
     for c in others:
         pe = perception.perception_of(c.pid)
-        sees = perception.notices(c.tile, c.rotation, pe, here, in_combat=True) or (
-            first is not None and perception.notices(c.tile, c.rotation, pe, first.tile, in_combat=True)
+        engaging = mem.i32(c.address + Obj.CRITTER_MANEUVER) & 1
+        sees = (
+            engaging
+            or perception.notices(c.tile, c.rotation, pe, here, in_combat=True)
+            or any(perception.notices(c.tile, c.rotation, pe, f.tile, in_combat=True) for f in foes)
         )
-        them.append(live(c, 1 if sees else None))
-    return fight(me, them, Rules(mem.glob("combat_difficulty"), mem.glob("fallout_game_time")))
+        them.append(live_foe(actor, c, here, 1 if sees else None))
+    first_foes = None
+    if s.dude.address in active:
+        pending = set(active[active.index(s.dude.address) + 1 :])
+        first_foes = tuple(i for i, c in enumerate(foes) if c.address in pending)
+    rules = Rules(mem.glob("combat_difficulty"), mem.glob("fallout_game_time"), first_foes)
+    if encounter := getattr(actor, "_encounter_id", None):
+        actor.log.emit(
+            "encounter_inputs",
+            encounter_id=encounter,
+            player=asdict(me),
+            foes=[asdict(f) for f in them],
+            rules=asdict(rules),
+            bound=RISK_MAX,
+            poison=mem.i32(s.dude.address + Obj.CRITTER_POISON),
+            model_limits=("line_of_fire", "critical_disability", "burst_side_lines", "poison"),
+        )
+    return fight(me, them, rules)
 
 
 def knowledge_proto(pid: int) -> dict:

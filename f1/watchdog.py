@@ -10,6 +10,7 @@ own run on the map, about ten ticks a second, is not progress). Movies and the e
 while a person uses the mouse or keyboard does not count (the agent waits for them then).
 """
 
+import struct
 import threading
 import time
 from dataclasses import dataclass, field
@@ -170,7 +171,27 @@ def look(mem: GameMemory) -> tuple[tuple, str, int]:
     elif s.screen == "dialogue":
         d = dialogue.read(mem)
         extra = (d.reply, tuple(d.options))
-    view = (s.screen, s.map_name, s.elevation, player, s.level, s.experience, turn, tuple(last_line), extra)
+    inventory: tuple = ()
+    if dude:
+        count, items = mem.i32(dude.address + em.Obj.INV_LENGTH), mem.u32(dude.address + em.Obj.INV_ITEMS)
+        if items and 0 < count <= 200:
+            pairs = struct.iter_unpack("<Ii", mem.read(items, 8 * count))
+            inventory = tuple((mem.u32(item + em.Obj.PID), qty, mem.u32(item + em.Obj.FLAGS)) for item, qty in pairs)
+    count, values = mem.glob("num_game_global_vars"), mem.glob("game_global_vars")
+    quest_state = mem.read(values, 4 * count) if values and 0 < count <= 4096 else b""
+    view = (
+        s.screen,
+        s.map_name,
+        s.elevation,
+        player,
+        s.level,
+        s.experience,
+        turn,
+        tuple(last_line),
+        extra,
+        inventory,
+        quest_state,
+    )
     return view, s.screen, s.game_time
 
 
@@ -189,13 +210,19 @@ class Watchdog(threading.Thread):
     def run(self) -> None:
         guard = Guard(state=session.GUARD_STATE)
         tracker = Tracker(since=time.monotonic())
-        pid, mem, gone, errors = None, None, False, set()
+        pid, mem, gone, errors, unreadable_since = None, None, False, set(), None
         try:
             while not self._stop_event.wait(PERIOD_S):
                 if _watched != pid:  # the first look, or a game restarted after a crash
                     if mem is not None:
                         mem.close()
-                    pid, mem, gone, tracker = _watched, None, False, Tracker(since=time.monotonic())
+                    pid, mem, gone, tracker, unreadable_since = (
+                        _watched,
+                        None,
+                        False,
+                        Tracker(since=time.monotonic()),
+                        None,
+                    )
                 if gone:
                     continue
                 try:
@@ -206,14 +233,28 @@ class Watchdog(threading.Thread):
                         gone = True
                         _trip("the game is gone")
                         self.log.emit("stuck", screen=None, why="the game is gone")
-                    tracker.reset(time.monotonic())  # a map loading: that is movement
+                    if not gone:
+                        now = time.monotonic()
+                        if unreadable_since is None:
+                            unreadable_since = now
+                            tracker.reset(now)  # a transient rebuild gets one loading allowance
+                        elif now - unreadable_since > limit_for("none"):
+                            gone = True
+                            _trip("the game remained unreadable")
+                            self.log.emit("stuck", screen=None, why="the game remained unreadable")
                     continue
                 except (ValueError, KeyError, IndexError, AttributeError) as e:  # a bug in the look: said once
                     if repr(e) not in errors:
                         errors.add(repr(e))
                         self.log.emit("watchdog_error", error=repr(e)[:300])
-                    tracker.reset(time.monotonic())
+                    now = time.monotonic()
+                    unreadable_since = now if unreadable_since is None else unreadable_since
+                    if now - unreadable_since > limit_for("none"):
+                        gone = True
+                        _trip("the game state could not be interpreted")
+                        self.log.emit("stuck", screen=None, why="the game state could not be interpreted")
                     continue
+                unreadable_since = None
                 if time.monotonic() < _quiet_until:  # a wait the route asked for: still is not stuck
                     tracker.reset(time.monotonic())
                     continue

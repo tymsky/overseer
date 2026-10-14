@@ -132,3 +132,37 @@ def test_a_message_box_seen_before_gets_its_allowance_from_its_opening() -> None
         if tracker.update((look,), screen, clock, float(t), False):
             trips.append(t)
     assert trips == [len(timeline) - 1]  # only the standing box: past its 5 s from its own opening
+
+
+def test_a_live_but_persistently_unreadable_game_has_a_bounded_loading_allowance(monkeypatch) -> None:
+    import threading
+
+    from f1.memory import ReadError
+
+    class Unreadable:
+        def __init__(self, pid):
+            raise ReadError("cannot read game state")
+
+    tripped = threading.Event()
+    events = []
+
+    def emit(kind, **fields):
+        events.append((kind, fields))
+        tripped.set()
+
+    monkeypatch.setattr(watchdog, "GameMemory", Unreadable)
+    monkeypatch.setattr(watchdog.win32, "is_alive", lambda pid: True)
+    monkeypatch.setattr(watchdog, "Guard", lambda state=None: None)
+    monkeypatch.setattr(watchdog, "PERIOD_S", 0.01)
+    monkeypatch.setitem(watchdog.LIMITS, "none", 0.02)
+    watchdog.clear()
+    dog = watchdog.Watchdog(4242, type("Log", (), {"emit": staticmethod(emit)})())
+    dog.start()
+    try:
+        assert tripped.wait(2)
+    finally:
+        dog.stop()
+        dog.join(2)
+    assert events == [("stuck", {"screen": None, "why": "the game remained unreadable"})]
+    with pytest.raises(watchdog.Stuck, match="unreadable"):
+        watchdog.check()

@@ -4,7 +4,7 @@ import time
 
 from f1 import clock, geometry, session, win32
 from f1 import engine_map as em
-from f1.action_shared import COMBAT_ACTIVE, Outcome
+from f1.action_shared import COMBAT_ACTIVE, Outcome, alive
 
 PROTO_CRITTER_FLAGS = 0x20  # the player prototype's critter flags: bit 0 sneaking
 
@@ -39,7 +39,7 @@ class MovementActions:
         before = self.snap()
         pre = {"from": before.dude.tile if before.dude else None, "to": tile, "mode": before.mouse_mode}
         self.log.emit("action_start", action="walk_to", **pre)
-        if before.screen != "map" or before.dude is None:
+        if before.screen != "map" or not alive(before):
             return self._end(False, "not on a map", pre)
         if self.mem.glob("combat_state") & COMBAT_ACTIVE:
             return self._end(False, "in combat", pre)
@@ -57,9 +57,14 @@ class MovementActions:
             arrived = self._walk_until(tile, timeout_s)
             still = arrived and win32.wait_for(lambda: self._still(tile), 3.0, 0.05)
         after = self.snap()
-        detail = pre | {"cursor": [cx, cy], "at": after.dude.tile, "seconds": round(time.monotonic() - t0, 2)}
+        detail = pre | {
+            "cursor": [cx, cy],
+            "at": after.dude.tile if after.dude else None,
+            "seconds": round(time.monotonic() - t0, 2),
+        }
         detail["combat"] = bool(self.mem.glob("combat_state") & COMBAT_ACTIVE)
-        return self._end(bool(arrived and still), "arrived" if arrived else "did not arrive", detail)
+        ok = alive(after) and after.screen == "map" and arrived and still
+        return self._end(bool(ok), "arrived" if ok else "did not arrive", detail)
 
     def walk_leg(self, tile: int, pan: bool = False, lead_s: float = 0.35, timeout_s: float = 12.0) -> Outcome:
         """One leg of a longer way (nav.go_to) that the next leg takes over without a stop. A click on `tile`; with
@@ -72,7 +77,7 @@ class MovementActions:
         before = self.snap()
         pre = {"from": before.dude.tile if before.dude else None, "to": tile, "mode": before.mouse_mode, "leg": True}
         self.log.emit("action_start", action="walk_to", **pre)
-        if before.screen != "map" or before.dude is None:
+        if before.screen != "map" or not alive(before):
             return self._end(False, "not on a map", pre)
         if self.mem.glob("combat_state") & COMBAT_ACTIVE:
             return self._end(False, "in combat", pre)
@@ -95,8 +100,12 @@ class MovementActions:
             last_tile, on_tile = None, time.monotonic()
             while time.monotonic() < end:
                 s = self.snap()
-                if s.screen != "map" or s.map_name != before.map_name or s.dude is None:
-                    got, why = True, "left the map"
+                if not alive(s):
+                    why = "died or no living player"
+                    break
+                if s.screen != "map" or (s.map_name, s.elevation) != (before.map_name, before.elevation):
+                    got = s.screen in {"map", "worldmap"}
+                    why = "left the map" if got else f"interrupted by {s.screen}"
                     break
                 if self.mem.glob("combat_state") & COMBAT_ACTIVE:
                     why = "combat"
@@ -133,7 +142,10 @@ class MovementActions:
         last, since = None, time.monotonic()
         last_tile, on_tile = None, time.monotonic()
         while time.monotonic() < end:
-            d = self.snap().dude
+            s = self.snap()
+            if s.screen != "map" or not alive(s) or self.in_combat():
+                return False
+            d = s.dude
             if d.tile == tile:
                 return True
             now = (d.tile, d.fid, d.frame)
@@ -149,9 +161,15 @@ class MovementActions:
         return False
 
     def _still(self, tile: int) -> bool:
-        a = self.snap().dude
+        first = self.snap()
+        if first.screen != "map" or not alive(first):
+            return False
+        a = first.dude
         time.sleep(0.15)  # a walk's frame lasts 100 ms at 10 fps: a frame held longer is a stop
-        b = self.snap().dude
+        second = self.snap()
+        if second.screen != "map" or not alive(second):
+            return False
+        b = second.dude
         return a.tile == b.tile == tile and (a.fid, a.frame) == (b.fid, b.frame)
 
     def center_view(self, tile: int | None = None) -> None:

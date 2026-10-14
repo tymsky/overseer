@@ -4,6 +4,7 @@ import time
 
 from f1 import clock, nav, quests, watchdog, win32
 from f1.actions import PID_STIMPAK, Actor
+from f1.objectives import ObjectiveOutcome
 from f1.route_support import (
     TOWN_GREETINGS,
     Step,
@@ -17,6 +18,9 @@ from f1.route_support import (
 PID_LEATHER_ARMOR, PID_BUG, PID_TAPE_RECORDER, PID_CAPS = 0x01, 0x39, 0x68, 0x29
 
 KILLIAN_JOB = ["#106", "#201", "#211", "#215"]  # KILLIAN.MSG
+GIZMO_HIRE = ["#104", "#111", "#117"]
+KILLIAN_ALTERNATE_JOB = ["#272", "#275", "#203", "#207", "#211"]
+GIZMO_ALTERNATE_CONFESSION = ["#141", "#154"]
 
 GIZMO_CONFESSION = [  # GIZMO.MSG, with the tape recorder in hand
     "#169",
@@ -88,10 +92,33 @@ def kenji(actor: Actor) -> bool:
     return fought and quests.find_critter(actor, "Kenji") is None and not actor.in_combat()
 
 
-def killians_job(actor: Actor) -> bool:
+def killians_job(actor: Actor) -> bool | ObjectiveOutcome:
+    if quests.gvar(actor, "KILLIAN_DEAD"):
+        return ObjectiveOutcome.unavailable("Killian died; Junktown's required ending is lost")
     if quests.gvar(actor, "HIRED_BY_KILLIAN") == 0:
         actor.holster(True)
         quests.talk(actor, "Killian Darkwater", KILLIAN_JOB, strict=True)
+        settle(actor)
+        if quests.gvar(actor, "HIRED_BY_KILLIAN") == 0:
+            if quests.gvar(actor, "GIZMO_DEAD") or quests.gvar(actor, "HIRED_BY_GIZMO") not in (0, 1):
+                return ObjectiveOutcome.unavailable("Killian's alternate job has no valid prerequisite")
+            if quests.gvar(actor, "HIRED_BY_GIZMO") == 0:
+                if not quests.take_exit(actor, "JUNKCSNO"):
+                    return ObjectiveOutcome.recoverable("cannot reach the alternate job dialogue")
+                quests.talk(actor, "Gizmo", GIZMO_HIRE, strict=True)
+                settle(actor)
+            if quests.gvar(actor, "HIRED_BY_GIZMO") != 1:
+                return ObjectiveOutcome.unavailable("alternate job dialogue did not establish hiring")
+            if not quests.take_exit(actor, "JUNKKILL"):
+                return ObjectiveOutcome.recoverable("cannot return to Killian")
+            by_day(actor)
+            quests.talk(actor, "Killian Darkwater", KILLIAN_ALTERNATE_JOB, strict=True)
+            settle(actor)
+            actor.log.emit(
+                "killian_alternative",
+                hired=quests.gvar(actor, "HIRED_BY_KILLIAN"),
+                recorder=actor._count(PID_TAPE_RECORDER),
+            )
     return quests.gvar(actor, "HIRED_BY_KILLIAN") != 0 and actor._count(PID_TAPE_RECORDER) > 0
 
 
@@ -102,7 +129,8 @@ def recorder_in_hand(actor: Actor) -> bool:
 def gizmos_confession(actor: Actor) -> bool:
     if quests.gvar(actor, "GOT_CONFESSION") == 0:
         recorder_in_hand(actor)  # a fight on the way readies a gun in their place
-        quests.talk(actor, "Gizmo", GIZMO_CONFESSION, strict=True)
+        plan = GIZMO_ALTERNATE_CONFESSION if quests.gvar(actor, "HIRED_BY_GIZMO") == 1 else GIZMO_CONFESSION
+        quests.talk(actor, "Gizmo", plan, strict=True)
     return quests.gvar(actor, "GOT_CONFESSION") != 0
 
 

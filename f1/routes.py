@@ -453,7 +453,9 @@ def all_routes() -> dict[str, list[Step]]:
     from f1 import boneyard, cathedral, hardened, idealist, military, raiders, watershed
 
     late = boneyard.ROUTES | military.ROUTES | raiders.ROUTES | watershed.ROUTES | hardened.ROUTES | cathedral.ROUTES
-    return ROUTES | idealist.ROUTES | late
+    from f1.objectives import identified_steps
+
+    return {key: identified_steps(steps, key) for key, steps in (ROUTES | idealist.ROUTES | late).items()}
 
 
 def main(argv: list[str]) -> int:
