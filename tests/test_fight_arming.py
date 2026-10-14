@@ -177,3 +177,61 @@ def test_a_shot_worth_taking_comes_before_a_hopeless_one_even_once_blocked() -> 
     other = SimpleNamespace(address=3, hp=6)  # among shots worth taking, the blocked one still waits
     order = target_order([near, other], {1: 95, 3: 60}, {1: 1, 3: 5}, blocked_before={1}, stuck_at=set())
     assert order == [other, near]
+
+
+class Fighter(actions.Actor):
+    max_hp, max_ap, flare_prep = 40, 9, None
+
+
+def test_a_foe_whose_aim_was_blocked_is_shot_at_next_turn_after_a_held_fire_turn(monkeypatch) -> None:
+    """The measured case (the radscorpion caves, an ironman run): the weighed radscorpion's aim was blocked in the
+    first turn, the fight held fire at an onlooker 14 hexes off (7 %) and ended the turn without trying every foe
+    again; the first walked up and stung beside the player for seven turns, never shot at."""
+    from contextlib import nullcontext
+
+    from f1 import clock, geometry, risk, session
+
+    a = object.__new__(Fighter)
+    a.log, a.pid, a.forced_prep, a.mem = Log(), 1, None, None
+    here = 20100
+    weighed = SimpleNamespace(address=1, tile=geometry.ring(here, 7)[0], hp=26, multihex=True, pid=0)
+    onlooker = SimpleNamespace(address=2, tile=geometry.ring(here, 15)[0], hp=26, multihex=True, pid=0)
+    combat, turns, shots = [True], [], []
+    dude = SimpleNamespace(ap=9, tile=here, hp=30)
+    a.snap = lambda: SimpleNamespace(dude=dude, screen="map", camera=None)
+    a.in_combat = lambda: combat[0]
+    a.my_turn = lambda: True
+    a.weigh_forced = lambda: None
+    a.forced_group = lambda: ([weighed], [onlooker])
+    a.enemies = lambda only=None: [weighed, onlooker]
+    a._count = lambda pid: 0
+    a.rearm = lambda s, held, drew: (False, actions.Held(PISTOL, 12, -1), drew)
+    a.weapon = lambda: actions.Held(PISTOL, 12, -1)
+    a.attack_cost = lambda held: 4
+    a.attack_reach = lambda held: 30
+    a.retreat = lambda foes, ap: None
+
+    def attack(target):
+        shots.append((len(turns), target.address))
+        if not turns:
+            return actions.Outcome(False, "aim blocked", {})
+        combat[0] = False
+        return actions.Outcome(True, "swung", {})
+
+    def end_turn():
+        turns.append(1)
+        weighed.tile = geometry.ring(here, 2)[0]  # it walks up beside the player
+
+    a.attack, a.end_turn = attack, end_turn
+    monkeypatch.setattr(win32, "wait_for", lambda cond, *x, **k: cond())
+    monkeypatch.setattr(clock, "fast", lambda pid: nullcontext())
+    monkeypatch.setattr(session, "press", lambda key: None)
+    monkeypatch.setattr(geometry, "on_view", lambda tile, cam, margin=8: True)
+    monkeypatch.setattr(risk, "heal_below", lambda max_hp, danger: 0)
+    monkeypatch.setattr(risk, "danger", lambda actor, foes, tile: 0)
+    monkeypatch.setattr(odds, "armed_at_range", lambda mem, c: False)
+    monkeypatch.setattr(odds, "shot_chance", lambda actor, e, pid, gap: 81 if gap <= 6 else 7)
+    out = a.fight(forced=True)
+    assert out.reason == "combat over"
+    assert shots == [(0, 1), (1, 1)]
+    assert [d["move"] for k, d in a.log.events if k == "tactic"] == ["wait for it", "hold fire"]

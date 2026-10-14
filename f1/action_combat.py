@@ -441,6 +441,10 @@ class CombatActions:
                             self.retreat(foes, s.dude.ap)
                         self.end_turn()
                         rounds += 1
+                        # a new turn tries every foe again here too: the radscorpion caves, an ironman run: the
+                        # weighed one's aim was blocked in the first turn, it walked up and stung beside the player
+                        # for seven turns, never shot at, while the fight held fire at an onlooker 14 hexes off
+                        missed.clear()
                         continue
             if in_reach and s.dude.ap >= cost:
                 out = self.attack(in_reach[0])
