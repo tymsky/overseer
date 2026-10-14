@@ -11,8 +11,11 @@ A script's local variables (local_var(n)) live in the map's array `map_local_var
 which bounds the index by 0x505AF0 and reads [0x505AE8] + 4 n.
 """
 
+import struct
+from functools import lru_cache
+
+from f1 import dat, knowledge
 from f1 import engine_map as em
-from f1 import knowledge
 from f1.engine_map import Obj
 from f1.memory import GameMemory
 
@@ -62,3 +65,29 @@ def script_of(mem: GameMemory, address: int) -> str:
     index = script_index(mem, mem.i32(address + Obj.SID))
     names = knowledge.load().get("scripts", [])
     return names[index] if index is not None and 0 <= index < len(names) else ""
+
+
+@lru_cache(maxsize=64)
+def procedure_names(script: str) -> tuple[str, ...]:
+    """A script's procedures by index, lower case, from SCRIPTS/<NAME>.INT: the procedure table at 42 (a count, then
+    24 bytes each, the name's offset first), the names after it, each led by its 2-byte length (read from the files:
+    HARRY.INT's 7 is harrycbt, its 20 harry03). Empty when the file cannot be read."""
+    try:
+        b = dat.GameFiles(knowledge.INSTANCE).read(f"SCRIPTS/{script.upper()}.INT")
+        n = struct.unpack(">I", b[42:46])[0]
+        names = 46 + 24 * n
+        out = []
+        for i in range(n):
+            o = struct.unpack(">I", b[46 + 24 * i : 50 + 24 * i])[0]
+            size = struct.unpack(">H", b[names + o - 2 : names + o])[0]
+            out.append(b[names + o : names + o + size].split(b"\0")[0].decode("latin1").lower())
+        return tuple(out)
+    except (OSError, struct.error, dat.DatError, KeyError, ValueError):
+        return ()
+
+
+def starts_fight(script: str, proc: int) -> bool:
+    """A dialogue option that runs its script's combat node (the game's scripts name 341 of them ...cbt or
+    ...combat, as HARRY.INT's harrycbt)."""
+    names = procedure_names(script) if script else ()
+    return 0 < proc < len(names) and names[proc].endswith(("cbt", "combat"))

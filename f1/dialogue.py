@@ -257,16 +257,27 @@ def leave(options: list[str]) -> int | None:
 RUDE = ("what's it to you", "wormface", "shove it up")
 
 
-def closing(options: list[str]) -> int:
+def closing(options: list[str], fights=frozenset()) -> int:
     """The option that ends a talk someone else began: its polite exit, else the last (often "[Done]") unless that
-    is a rude one, then the first that is not."""
+    is a rude one, then the first that is not. Never one of `fights`, the options that run the script's combat node
+    while another is offered (Harry's "I'll have to kill you", the last of two, began a fight)."""
+    ok = [i not in fights for i in range(len(options))] if len(fights) < len(options) else [True] * len(options)
     i = leave(options)
-    if i is not None:
+    if i is not None and ok[i]:
         return i
     rude = [any(r in o.lower() for r in RUDE) for o in options]
-    if not rude[-1]:
+    if not rude[-1] and ok[-1]:
         return len(options) - 1
-    return next((i for i, r in enumerate(rude) if not r), len(options) - 1)
+    return next(
+        (i for i, r in enumerate(rude) if not r and ok[i]), next(i for i in reversed(range(len(options))) if ok[i])
+    )
+
+
+def fights(d: "Dialogue") -> frozenset[int]:
+    """The options of `d` that run its script's combat node."""
+    from f1 import scripts
+
+    return frozenset(o.index for o in d.entries if scripts.starts_fight(d.script, o.proc))
 
 
 def close(mem: GameMemory, tries: int = 6) -> bool:
@@ -285,7 +296,7 @@ def close(mem: GameMemory, tries: int = 6) -> bool:
         if not d.options:
             time.sleep(0.4)
             continue
-        choose(mem, closing(d.options))
+        choose(mem, closing(d.options, fights(d)))
     return state.detect_screen(mem) != "barter" and not read(mem).active
 
 

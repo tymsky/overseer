@@ -500,7 +500,7 @@ def close_dialogue(actor: Actor, nodes: int = 4) -> bool:
         if not d.active:
             return True
         if d.options:
-            i = dialogue.closing(d.options)
+            i = dialogue.closing(d.options, dialogue.fights(d))
             actor.log.emit("dialogue", speaker=d.speaker, reply=d.reply, options=d.options, chosen=d.options[i])
             dialogue.choose(actor.mem, i)
         else:
