@@ -262,7 +262,7 @@ def thin_the_caves(actor: Actor) -> bool:
     """The first visit: every radscorpion the odds gate lets the player fight. The rest wait for the second visit
     (after Tandi: levels and kit later, and the dynamite seals the nest), so as not to fight over the gate's bound
     (an ironman run: one at full HP, both flares spent, came to a death bound of 0.205). Done when none is left, or
-    when the gate refused the next one and one lies dead for its tail."""
+    when the gate refused the next one and one lies dead for its tail, or refused the first: all wait then."""
     if quests.gvar(actor, GVAR_NUM_RADSCORPIONS) == 0:
         return True
     into_the_caves(actor)
@@ -274,6 +274,12 @@ def thin_the_caves(actor: Actor) -> bool:
         into_the_caves(actor)  # a flight out: back in for the tail
         actor.log.emit("caves_left", left=left, why=why)
         return on_map(actor, "CAVES")
+    if why.startswith(("odds", "fled")):
+        # the gate refused the first one too (an ironman run: 28 % to hit in the dark at 9 hexes, a death bound of
+        # 0.97; the retry met the same numbers and the run stopped for no progress): all nine wait for the second
+        # visit, and with no tail the antidote and Jarvis wait with them (razlo_antidote, antidote_later)
+        actor.log.emit("caves_left", left=left, why=why)
+        return True
     return False
 
 
