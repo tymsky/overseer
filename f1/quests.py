@@ -116,6 +116,7 @@ MEND_FLOOR = 0.5  # of max HP: below it after the poison, the kept stimpaks too;
 POISON_MATTERS = 2  # a tick takes 1 HP and 2 poison: 1 left costs at most 1 HP (a road fight left it)
 POISON_REST = "2 hours"  # a tick every 505 - 5 x poison game seconds: poison 39 runs out in about 2.3 h
 MEND_RESTS = 4
+POISON_TRAVEL_HP = 5  # chosen, not measured: the HP a trip may leave after the poison (a rest stops at 5)
 
 
 def poison(actor: Actor) -> int:
@@ -125,10 +126,11 @@ def poison(actor: Actor) -> int:
 
 def poison_bearable(actor: Actor, hp: int) -> bool:
     """The poison left takes at most (poison + 1) // 2 HP (a tick: 1 HP and 2 poison); travel goes on while that
-    leaves MEND_FLOOR of max HP (less poison than POISON_MATTERS: always). The world map has no way to cure or rest it
-    out, so a stricter test ends the trip there: an ironman run fled a road fight stung (poison 4, HP 32 of 38)."""
+    leaves more than POISON_TRAVEL_HP (less poison than POISON_MATTERS: always). The world map has no way to cure or
+    rest it out, so a refusal there ends the life: ironman runs fled stung to the world map (poison 4 at HP 32 of 38,
+    poison 7 at HP 20) and stopped. A full run left a fight poisoned at 33 HP and reached 6 on the way (about 54)."""
     left = poison(actor)
-    return left < POISON_MATTERS or hp - (left + 1) // 2 >= MEND_FLOOR * actor.max_hp
+    return left < POISON_MATTERS or hp - (left + 1) // 2 > POISON_TRAVEL_HP
 
 
 def _clear_poison(actor: Actor) -> bool:

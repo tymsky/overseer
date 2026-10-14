@@ -140,14 +140,14 @@ def test_healing_does_not_start_a_long_rest_during_a_poison_emergency() -> None:
 @pytest.mark.parametrize(
     ("hp", "poison", "bearable"),
     [
-        (32, 4, True),  # the measured case: fled a road fight stung, 2 HP to come; the trip stopped on the world map
-        (33, 54, False),  # a full run's 33 -> 6 HP on the way to Junktown
-        (27, 6, True),  # 24 left: the floor, half of 48
-        (26, 6, False),
-        (20, 1, True),  # under POISON_MATTERS the HP is left to the travel days
+        (32, 4, True),  # measured: fled a road fight stung; the trip stopped on the world map
+        (20, 7, True),  # measured: fled the caves stung; the trip back stopped on the world map
+        (33, 54, True),  # about what a full run had: 33 HP, reached 6 on the way
+        (32, 54, False),  # 5 left
+        (5, 1, True),  # under POISON_MATTERS the HP is left to the travel days
     ],
 )
-def test_travel_goes_on_while_the_poison_left_keeps_half_the_hp(monkeypatch, hp, poison, bearable):
+def test_travel_goes_on_unless_the_poison_left_would_take_the_hp_to_5(monkeypatch, hp, poison, bearable):
     actor = Mender(hp, poison)
     monkeypatch.setattr(quests, "poison", lambda a: a.poison)
     assert quests.poison_bearable(actor, hp) is bearable
