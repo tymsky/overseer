@@ -172,6 +172,7 @@ def test_an_intercepted_object_click_closes_the_companion_and_verifies_the_reque
     actor.center_view = actor.point = lambda *args: True
     actor.companions_settle = lambda *args: None
     actor.predict = lambda address: None
+    actor.rest_off = lambda targets: None
     actor._art_aims = lambda *args: []
     actor.hovering = lambda *args, **kwargs: 77
     actor._interaction_done = lambda done, targets: actions.Actor._interaction_done(actor, done, targets)
