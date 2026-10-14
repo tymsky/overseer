@@ -5,7 +5,7 @@ from f1 import quests
 
 
 def test_a_denied_mainframe_is_asked_again(monkeypatch):
-    # a scout: "Grant me access" denied twice (ZAX.INT Mainframe00, Science -10) and the route ended there
+    # the access request denied twice (ZAX.INT Mainframe00, Science -10) and the route ended there
     state = {"talks": 0, "WATER_CHIP_3": 0}
 
     def zax(actor, goal, most=glow.ZAX_TRIES):
