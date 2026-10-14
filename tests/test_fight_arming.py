@@ -207,6 +207,7 @@ def test_a_foe_whose_aim_was_blocked_is_shot_at_next_turn_after_a_held_fire_turn
     a._count = lambda pid: 0
     a.rearm = lambda s, held, drew: (False, actions.Held(PISTOL, 12, -1), drew)
     a.weapon = lambda: actions.Held(PISTOL, 12, -1)
+    monkeypatch.setattr(weapons, "attack_type", lambda pid, secondary=False: "ranged")  # no knowledge base needed
     a.attack_cost = lambda held: 4
     a.attack_reach = lambda held: 30
     a.retreat = lambda foes, ap: None

@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 from f1 import dialogue, idealist_hub, state, watchdog, win32
 
+# made-up message lines: a failed try on the box (HTWRBOX), the one that jams it, the engine's answer after a jam
+FAILED, FAILED_AND_JAMMED, JAMMED = "strongbox: not open", "strongbox: not open, jammed", "lock: jammed"
+
 
 class Log:
     def __init__(self) -> None:
@@ -37,25 +40,18 @@ def box_actor(monkeypatch, answers: list[str]) -> SimpleNamespace:
 
 def test_a_jammed_lock_stops_the_tries(monkeypatch) -> None:
     """The measured case (an ironman run, live): the second try jammed the lock (HTWRBOX 109), and every try after
-    answered only the engine's "The lock is jammed." with no "strongbox" in it: six tries, 13 s each, until the
-    watchdog ended the run."""
-    a = box_actor(
-        monkeypatch,
-        [
-            "You were unable to unlock the strongbox.",
-            "You were unable to unlock the strongbox, and the  lock has become jammed.",
-            "The lock is jammed.",
-        ],
-    )
+    answered only the engine's jam message, with no "strongbox" in it: six tries, 13 s each, until the watchdog
+    ended the run. The lines here are made up; the step reads only those two words in them."""
+    a = box_actor(monkeypatch, [FAILED, FAILED_AND_JAMMED, JAMMED])
     assert idealist_hub.pick_the_box(a, frozenset()) == "jammed"
     assert a.tries == 2
     assert a.quiet == [idealist_hub.BOX_TRIES * 6, "off"]
-    a = box_actor(monkeypatch, ["The lock is jammed."])  # jammed before the first try
+    a = box_actor(monkeypatch, [JAMMED])  # jammed before the first try
     assert idealist_hub.pick_the_box(a, frozenset()) == "jammed" and a.tries == 1
 
 
 def test_failed_tries_go_on_to_the_limit(monkeypatch) -> None:
-    a = box_actor(monkeypatch, ["You were unable to unlock the strongbox."])
+    a = box_actor(monkeypatch, [FAILED])
     assert idealist_hub.pick_the_box(a, frozenset()) == "tries" and a.tries == idealist_hub.BOX_TRIES
 
 

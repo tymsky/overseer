@@ -260,7 +260,7 @@ RUDE = ("what's it to you", "wormface", "shove it up")
 def closing(options: list[str], fights=frozenset()) -> int:
     """The option that ends a talk someone else began: its polite exit, else the last (often "[Done]") unless that
     is a rude one, then the first that is not. Never one of `fights`, the options that run the script's combat node
-    while another is offered (Harry's "I'll have to kill you", the last of two, began a fight)."""
+    while another is offered (Harry's threat, the last of two, began a fight)."""
     ok = [i not in fights for i in range(len(options))] if len(fights) < len(options) else [True] * len(options)
     i = leave(options)
     if i is not None and ok[i]:

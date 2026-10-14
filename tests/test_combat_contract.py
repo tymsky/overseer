@@ -378,6 +378,8 @@ def combat_actor(monkeypatch):
     monkeypatch.setattr(risk, "danger", lambda *args: 0)
     monkeypatch.setattr(odds, "shot_chance", lambda *args: 95)
     monkeypatch.setattr(odds, "armed_at_range", lambda *args: False)
+    # the held pid 8 is a pistol: its prototype says ranged (the knowledge base is not in every checkout)
+    monkeypatch.setattr(weapons, "attack_type", lambda pid, secondary=False: "unarmed" if pid is None else "ranged")
     return a
 
 
