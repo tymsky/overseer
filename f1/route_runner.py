@@ -110,6 +110,7 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[ObjectiveOutcome, b
     snapshot). A step that crashed failed."""
     log = actor.log
     log.emit("objective", text=step.name, step=number, objective_id=step.objective_id)
+    before = getattr(log, "last_failed", None)
     t0 = time.monotonic()
     watchdog.clear()
     stuck = False
@@ -143,12 +144,23 @@ def try_step(actor: Actor, step: Step, number: int) -> tuple[ObjectiveOutcome, b
     s = actor.snap()
     died = not (ok and step.final) and (s.screen == "main_menu" or s.dude is None or s.dude.hp <= 0 or death_screen(s))
     rads = actor.mem.i32(s.dude.address + Obj.CRITTER_RADIATION) if s.dude and hasattr(actor, "mem") else None
+    # a step's own verdict often says nothing ("recoverable", ""): the last action that failed in this try goes
+    # with it (a miss the step got past before it failed otherwise is named too: evidence, not the verdict)
+    failed = getattr(log, "last_failed", None)
+    actor.failed_action = failed[1] if not ok and failed is not None and failed != before else None
     log.emit(
         "step_end", step=step.name, ok=ok and not died, seconds=round(time.monotonic() - t0, 1),
         hp=s.dude.hp if s.dude else None, rads=rads, objective_id=step.objective_id,
         status=result.status, reason=result.reason,
+        **({"failed_action": actor.failed_action} if actor.failed_action else {}),
     )  # fmt: skip
     return result, died, s, stuck
+
+
+def read_error(result: ObjectiveOutcome) -> bool:
+    """A try that ended on a ReadError with the game alive (try_step's reason is the error's repr): a read the game
+    raced, as the map's object lists rewired while the game moves objects, not a game that is gone."""
+    return result.status == "technical_error" and result.reason.startswith(f"{ReadError.__name__}(")
 
 
 def failure_state(actor: Actor, step: Step, s: state.Snapshot) -> tuple:
@@ -297,6 +309,7 @@ def run(
     fails: dict[str, int] = dict(carry.get("fails", {}))
     skipped: list[str] = list(carry.get("skipped", []))
     last_failure: dict[str, tuple] = {}  # where the game stood after a step's last failure (fail fast)
+    read_retried: set[str] = set(carry.get("read_retried", []))  # objectives tried again after a ReadError
     actor.objective_progress = None
     statuses, pending = inferred_progress(actor, steps, start, progress)
     actor.pending_objectives = pending
@@ -335,7 +348,9 @@ def run(
             continue
         if on_step:
             if actor.objective_progress is not None:  # what a driver taking over before this step carries on with
-                actor.objective_progress.update(leveled=leveled, fails=fails, skipped=skipped)
+                actor.objective_progress.update(
+                    leveled=leveled, fails=fails, skipped=skipped, read_retried=sorted(read_retried)
+                )
             on_step(i)
         missing = [key for key in step.requires if statuses.get(key) != "achieved"]
         if missing:
@@ -361,6 +376,13 @@ def run(
         ok = bool(result)
         statuses[step.objective_id] = "death" if died else result.status
         if not died and not stuck and result.status == "technical_error":
+            if read_error(result) and step.tries > 1 and not step.final and step.objective_id not in read_retried:
+                # memory gone mid-read fails the try, not the run: once more where the game stands, once per
+                # objective (names repeat on a route); a second one ends it. Not a step of one try (its roll's first
+                # outcome stands, and the read may have come after it), nor the final one (the ending plays on).
+                read_retried.add(step.objective_id)
+                log.emit("retry", step=step.name, tries=fails.get(step.name, 0) + 1, why=result.reason)
+                continue
             fields = {
                 "ok": False,
                 "at": step.name,
@@ -442,7 +464,8 @@ def run(
             if where == last_failure.get(step.name) and not step.optional:  # fail fast: again, and nothing changed
                 why = "no progress: failed again and the game did not change"
                 log.emit("route_end", ok=False, at=step.name, why=why, loads=loads, fails=fails, skipped=skipped,
-                         ended="failed", objective_id=step.objective_id, status=result.status)  # fmt: skip
+                         ended="failed", objective_id=step.objective_id, status=result.status,
+                         failed_action=getattr(actor, "failed_action", None))  # fmt: skip
                 return {"ok": False, "at": step.name, "why": why, "loads": loads, "fails": fails, "skipped": skipped,
                         "ended": "failed", "step": i + 1, "objective_id": step.objective_id}  # fmt: skip
             last_failure[step.name] = where
@@ -464,6 +487,7 @@ def run(
                 ended="failed",
                 objective_id=step.objective_id,
                 status=result.status,
+                failed_action=getattr(actor, "failed_action", None),
             )
             return {"ok": False, "at": step.name, "loads": loads, "fails": fails, "skipped": skipped,
                     "ended": "failed", "step": i + 1, "objective_id": step.objective_id}  # fmt: skip

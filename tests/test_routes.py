@@ -397,6 +397,127 @@ def test_an_ironman_run_without_trouble_ends_done(loads: list[int]) -> None:
     assert actor.log.kinds("save") == [] and loads == []
 
 
+def racing(ran: list[str], errors: int):
+    """A door step whose object scan raced the game the first `errors` times: the map's object lists rewired under
+    the read while critters walked (a read of an Object at 0), the game alive and the player well."""
+
+    def run(actor) -> bool:
+        ran.append("door")
+        if len(ran) <= errors:
+            raise routes.ReadError("read of 132 bytes at 0x00000000 failed")
+        return True
+
+    return run
+
+
+def test_an_ironman_step_that_raced_a_read_is_tried_once_more_where_the_game_stands(loads: list[int]) -> None:
+    ran: list[str] = []
+    steps = [Step("a", lambda _a: True), Step("the doors", racing(ran, 1)), Step("b", lambda _a: True)]
+    actor = FakeActor()
+    result = routes.run(actor, steps, ironman=True)
+    assert result["ended"] == "done" and ran == ["door", "door"] and loads == []
+    (retry,) = actor.log.kinds("retry")
+    assert retry["step"] == "the doors" and retry["why"].startswith("ReadError(")
+    assert result["fails"] == {}  # the race is no failure of the step's own: its tries stay whole
+
+
+def test_a_second_read_error_in_the_same_step_ends_the_ironman_run(loads: list[int]) -> None:
+    ran: list[str] = []
+    steps = [Step("the doors", racing(ran, 2), tries=3), Step("b", lambda _a: True)]
+    result = routes.run(FakeActor(), steps, ironman=True)
+    assert result["ended"] == "error" and result["status"] == "technical_error" and ran == ["door", "door"]
+
+
+def test_each_objective_of_a_repeated_name_gets_its_own_read_retry(loads: list[int]) -> None:
+    """Names repeat on a route ("to the Hub" four times): a race on the first trip leaves the later ones their try."""
+    first: list[str] = []
+    later: list[str] = []
+    steps = [
+        Step("to the Hub", racing(first, 1)),
+        Step("downtown", lambda _a: True),
+        Step("to the Hub", racing(later, 1)),
+    ]
+    actor = FakeActor()
+    result = routes.run(actor, steps, ironman=True)
+    assert result["ended"] == "done" and first == ["door", "door"] and later == ["door", "door"]
+    assert [r["tries"] for r in actor.log.kinds("retry")] == [1, 1]  # the film's caption: "Try 2."
+
+
+def test_a_step_of_one_try_is_not_run_again_after_a_read_error(loads: list[int]) -> None:
+    """Its roll's first outcome stands, and the read may have failed after the roll."""
+    ran: list[str] = []
+    result = routes.run(FakeActor(), [Step("Sherry turned", racing(ran, 1), tries=1)], ironman=True)
+    assert result["ended"] == "error" and ran == ["door"]
+
+
+def test_a_driver_taking_over_carries_the_read_retries_spent(loads: list[int]) -> None:
+    ran: list[str] = []
+    seen: list[dict] = []
+    actor = FakeActor()
+    steps = [Step("the doors", racing(ran, 1)), Step("b", lambda _a: True)]
+    routes.run(actor, steps, ironman=True, on_step=lambda i: seen.append(dict(actor.objective_progress)))
+    assert seen[-1]["read_retried"] == ["route.the-doors"]
+    again: list[str] = []
+    handed = dict(seen[1])  # handed over before the retry of the doors: their read retry is spent
+    result = routes.run(FakeActor(), [Step("the doors", racing(again, 1))], ironman=True, progress=handed)
+    assert result["ended"] == "error" and again == ["door"]
+
+
+def test_a_game_gone_mid_read_is_no_race_to_try_again(loads: list[int]) -> None:
+    ran: list[str] = []
+
+    def crash(actor) -> bool:
+        ran.append("c")
+        actor.alive = False
+        raise routes.ReadError("the game is gone")
+
+    actor = FakeActor()
+    result = routes.run(actor, [Step("c", crash)], ironman=True)
+    assert result["ended"] == "stuck" and ran == ["c"] and actor.log.kinds("retry") == []
+
+
+def test_a_failed_step_names_the_last_action_that_failed_in_it(tmp_path, loads: list[int]) -> None:
+    """A guard's refusal ended a step whose own verdict said nothing: the step's end and the route's name the
+    refusal ("visit: unsafe to travel while poisoned") beside the empty reason."""
+    import json
+
+    from f1.telemetry import EventLog
+
+    def to_town(actor) -> bool:
+        actor.log.emit("action_end", action="visit", ok=False, reason="unsafe to travel while poisoned")
+        return False
+
+    def fine_after_a_miss(actor) -> bool:
+        actor.log.emit("action_end", action="walk_to", ok=False, reason="no path")  # missed, then got there
+        return True
+
+    def quiet(actor) -> bool:
+        return False
+
+    actor = FakeActor(log=EventLog(tmp_path / "events.jsonl"))
+    steps = [Step("a", fine_after_a_miss), Step("to town", to_town, tries=3), Step("b", quiet)]
+    result = routes.run(actor, steps, ironman=True)
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    ends = [e for e in events if e["kind"] == "step_end"]
+    assert result["ended"] == "failed" and result["at"] == "to town"
+    refused = "visit: unsafe to travel while poisoned"
+    assert [e.get("failed_action") for e in ends] == [None, refused, refused]  # the try, then the fail-fast's
+    (end,) = [e for e in events if e["kind"] == "route_end"]
+    assert end["failed_action"] == refused
+
+
+def test_a_step_with_no_failed_action_of_its_own_names_none(tmp_path, loads: list[int]) -> None:
+    from f1.telemetry import EventLog
+
+    def missed_once(actor) -> bool:
+        actor.log.emit("action_end", action="walk_to", ok=False, reason="no path")
+        return True
+
+    actor = FakeActor(log=EventLog(tmp_path / "events.jsonl"))
+    result = routes.run(actor, [Step("a", missed_once), Step("b", lambda _a: False, tries=1)], ironman=True)
+    assert result["ended"] == "failed" and actor.failed_action is None
+
+
 def test_the_ironman_cap_bounds_every_screen() -> None:
     try:
         watchdog.set_cap(60)

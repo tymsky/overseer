@@ -30,6 +30,7 @@ class EventLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._seq = last_seq(path)  # a driver that takes over a run's log carries its numbering on
         self._lock = threading.Lock()  # a watchdog thread writes too
+        self.last_failed: tuple[int, str] | None = None  # the last failed action_end: (seq, "action: reason")
 
     def emit(self, kind: str, **fields: Any) -> dict[str, Any]:
         with self._lock:
@@ -43,4 +44,6 @@ class EventLog:
             }
             with self.path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
+            if kind == "action_end" and fields.get("ok") is False:
+                self.last_failed = (self._seq, f"{fields.get('action')}: {fields.get('reason')}")
         return event
