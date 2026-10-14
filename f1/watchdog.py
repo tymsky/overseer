@@ -119,6 +119,8 @@ class Tracker:
     since: float = 0.0
     clock: int | None = None
     seen: set = field(default_factory=set)  # the looks since the last reset: progress is a look not among them
+    screen: str | None = None
+    screen_since: float = 0.0  # when the current screen came up
 
     def reset(self, now: float) -> None:
         """Movement the look cannot see (a map loading, a wait the route asked for): a fresh start."""
@@ -131,6 +133,8 @@ class Tracker:
         # a faster clock (f1.clock) runs the game's time up to `speed` times as fast: its own run is no jump
         jumped = self.clock is not None and clock - self.clock > CLOCK_JUMP * max(1.0, speed)
         self.clock = clock
+        if screen != self.screen:
+            self.screen, self.screen_since = screen, now
         if owner_active or jumped:
             self.seen.clear()
         if owner_active or jumped or look not in self.seen:
@@ -143,7 +147,11 @@ class Tracker:
             self.last, self.since = look, now
             return None
         limit = limit_for(screen)
-        if limit is None or now - self.since <= limit:
+        # a message box's allowance runs from its own opening: a second locker beside the first gave the same looks
+        # (the tile, "You search the Locker.", the how-many box), and its how-many box, answered in a second, tripped
+        # 9 s after the last new look (the Glow's lockers, two ironman runs)
+        start = max(self.since, self.screen_since) if state.window_kind(screen) == "box" else self.since
+        if limit is None or now - start <= limit:
             return None
         self.since = now  # the route gets a whole allowance to recover before the next trip
         return f"nothing moved for {limit:.0f} s on {screen}"

@@ -117,3 +117,18 @@ def test_a_route_stepping_to_and_fro_is_stuck() -> None:
     tile and the last line taking turns; each look differed from the one before and nothing tripped for minutes."""
     assert feed(Tracker(), [("door", 22124), ("door", 21724)] * 60) == [92]  # the second look was new
     assert feed(Tracker(), [("walk", t) for t in range(150)]) == []  # a long walk: every look new
+
+
+def test_a_message_box_seen_before_gets_its_allowance_from_its_opening() -> None:
+    # two lockers side by side: the second loot's looks (the loot screen, the how-many box) were all seen at the
+    # first, so nothing is new; a box answered in a second must not trip, one left standing must
+    box = "window 6 (0x14 752,382 259x162)"
+    tracker, clock, trips = Tracker(), 1000, []
+    timeline = [("map", "map")] + [("loot", "loot")] * 2 + [(box, box)] + [("loot", "loot")] * 3 + [("map", "map")]
+    timeline += [("loot", "loot")] * 2 + [(box, box)] + [("loot", "loot")] * 2  # the second locker: all seen
+    timeline += [(box, box)] * 7  # a box left standing
+    for t, (look, screen) in enumerate(timeline):
+        clock += 10
+        if tracker.update((look,), screen, clock, float(t), False):
+            trips.append(t)
+    assert trips == [len(timeline) - 1]  # only the standing box: past its 5 s from its own opening
